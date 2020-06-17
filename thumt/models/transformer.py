@@ -8,6 +8,7 @@ from __future__ import print_function
 import math
 import torch
 import torch.nn as nn
+import ipdb
 
 import thumt.utils as utils
 import thumt.modules as modules
@@ -410,6 +411,20 @@ class Transformer(modules.Module):
         return params
 
     @staticmethod
+    def test_params():
+        params = Transformer.base_params()
+        params.hidden_size = 64
+        params.filter_size = 256
+        params.num_heads = 4
+        params.residual_dropout = 0.0
+        params.learning_rate = 5e-4
+        params.train_steps = 100000
+        params.num_encoder_layers = 3
+        params.num_decoder_layers = 3
+
+        return params
+
+    @staticmethod
     def default_params(name=None):
         if name == "base":
             return Transformer.base_params()
@@ -419,5 +434,7 @@ class Transformer(modules.Module):
             return Transformer.big_params()
         elif name == "big_v2":
             return Transformer.big_params_v2()
+        elif name == "test":
+            return Transformer.test_params()
         else:
             return Transformer.base_params()
