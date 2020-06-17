@@ -42,6 +42,7 @@ def parse_args(args=None):
                         help="Path of validation file")
     parser.add_argument("--references", type=str,
                         help="Pattern of reference files")
+    # settings
     parser.add_argument("--checkpoint", type=str,
                         help="Path to pre-trained checkpoint")
     parser.add_argument("--distributed", action="store_true",
@@ -50,6 +51,9 @@ def parse_args(args=None):
                         help="Local rank of this process")
     parser.add_argument("--half", action="store_true",
                         help="Enable mixed precision training")
+    parser.add_argument("--log_interval", type=int, default=100,
+                        help="display interval of steps")
+    # hyperparams
     parser.add_argument("--hparam_set", type=str,
                         help="Name of pre-defined hyper parameter set")
 
@@ -408,6 +412,8 @@ def main(args):
     counter = 0
 
     while True:
+        start_time = time.time()
+
         for features in dataset:
             if counter % params.update_cycle == 0:
                 step += 1
@@ -429,8 +435,15 @@ def main(args):
             summary.scalar("loss", loss, step, write_every_n_steps=1)
             summary.scalar("global_step/sec", t, step)
 
-            print("epoch = %d, step = %d, loss = %.3f (%.3f sec)" %
-                  (epoch + 1, step, float(loss), t))
+            if step > 0 and step % args.log_interval == 0:
+                elapsed = time.time() - start_time
+                print('| epoch {:2d} | step {:8d} | lr {:02.2e} | '
+                      'ms/step {:4.0f} | loss {:8.4f} '.format(
+                    epoch + 1, step, 
+                    optimizer._optimizer._learning_rate(step),
+                    elapsed * 1000 / args.log_interval, 
+                    loss.item()))
+                start_time = time.time()
 
             if counter % params.update_cycle == 0:
                 if step >= params.train_steps:
@@ -446,9 +459,11 @@ def main(args):
                 if step % params.eval_steps == 0:
                     utils.evaluate(model, eval_dataset, params.output,
                                   references, params)
+                    start_time = time.time()
 
                 if step % params.save_checkpoint_steps == 0:
                     save_checkpoint(step, epoch, model, optimizer, params)
+                    start_time = time.time()
 
         epoch += 1
 

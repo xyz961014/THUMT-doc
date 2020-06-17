@@ -24,6 +24,7 @@ from thumt.utils.bpe import BPE
 from thumt.utils.misc import get_global_step
 from thumt.utils.summary import scalar
 
+from tqdm import tqdm
 
 def _save_log(filename, result):
     metric, global_step, score = result
@@ -122,11 +123,21 @@ def _evaluate_model(model, dataset, references, params):
         counter = 0
         pad_max = 1024
 
+        # count eval dataset
+        total_len = 0
+        for _ in iterator:
+            total_len += 1
+        iterator = iter(dataset)
+
         # Buffers for synchronization
         size = torch.zeros([dist.get_world_size()]).long()
         t_list = [torch.empty([params.decode_batch_size, pad_max]).long()
                   for _ in range(dist.get_world_size())]
         results = []
+
+        if dist.get_rank() == 0:
+            pbar = tqdm(total=total_len)
+            pbar.set_description("Validating model")
 
         while True:
             try:
@@ -140,7 +151,6 @@ def _evaluate_model(model, dataset, references, params):
                 }
                 batch_size = 0
 
-            t = time.time()
             counter += 1
 
             # Decode
@@ -177,12 +187,13 @@ def _evaluate_model(model, dataset, references, params):
 
                     results.append(seq.split())
 
-            t = time.time() - t
-            print("Finished batch: %d (%.3f sec)" % (counter, t))
+            if dist.get_rank() == 0:
+                pbar.update(1)
 
     model.train()
 
     if dist.get_rank() == 0:
+        pbar.close()
         return bleu(results, references)
     else:
         return 0.0
@@ -215,6 +226,7 @@ def evaluate(model, dataset, base_dir, references, params):
     global_step = get_global_step()
 
     if dist.get_rank() == 0:
+        print("-" * 90)
         print("Validating model at step %d" % global_step)
 
     score = _evaluate_model(model, dataset, references, params)
@@ -254,3 +266,4 @@ def evaluate(model, dataset, base_dir, references, params):
 
         best_score = records[0][1]
         print("Best score at step %d: %f" % (global_step, best_score))
+        print("-" * 90)

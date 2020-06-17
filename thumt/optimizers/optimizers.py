@@ -8,7 +8,10 @@ from __future__ import print_function
 import re
 import math
 import torch
+import ipdb
+
 import torch.distributed as dist
+
 import thumt.utils as utils
 import thumt.utils.summary as summary
 
@@ -244,8 +247,10 @@ class AdamOptimizer(Optimizer):
             bias_corr_1 = 1 - beta_1 ** self._iterations
             bias_corr_2 = 1 - beta_2 ** self._iterations
 
-            m.mul_(beta_1).add_(1 - beta_1, grad)
-            v.mul_(beta_2).addcmul_(1 - beta_2, grad, grad)
+            #m.mul_(beta_1).add_(1 - beta_1, grad)
+            #v.mul_(beta_2).addcmul_(1 - beta_2, grad, grad)
+            m.mul_(beta_1).add_(grad, alpha=1 - beta_1)
+            v.mul_(beta_2).addcmul_(grad, grad, value=1 - beta_2)
             denom = (v.sqrt() / math.sqrt(bias_corr_2)).add_(epsilon)
 
             if isinstance(lr, LearningRateSchedule):
@@ -254,10 +259,12 @@ class AdamOptimizer(Optimizer):
             step_size = lr / bias_corr_1
 
             if var.dtype == torch.float32:
-                var.data.addcdiv_(-step_size, m, denom)
+                #var.data.addcdiv_(-step_size, m, denom)
+                var.data.addcdiv_(m, denom, value=-step_size)
             else:
                 fp32_var = var.data.float()
-                fp32_var.addcdiv_(-step_size, m, denom)
+                #fp32_var.addcdiv_(-step_size, m, denom)
+                var.data.addcdiv_(m, denom, value=-step_size)
                 var.data.copy_(fp32_var)
 
     def state_dict(self):

@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import math
 import torch
+
 import tensorflow as tf
 import ipdb
 
@@ -212,8 +213,8 @@ def beam_search(models, features, params):
         states)
 
     # Initial beam search state
-    init_seqs = torch.full([batch_size, beam_size, 1], bos_id, device=device)
-    init_seqs = init_seqs.long()
+    init_seqs = torch.full([batch_size, beam_size, 1], bos_id, device=device, dtype=torch.long)
+    #init_seqs = init_seqs.long()
     init_log_probs = init_seqs.new_tensor(
         [[0.] + [min_val] * (beam_size - 1)], dtype=torch.float32)
     init_log_probs = init_log_probs.repeat([batch_size, 1])
