@@ -8,7 +8,6 @@ from __future__ import print_function
 import math
 import torch
 import torch.nn as nn
-import ipdb
 
 import thumt.utils as utils
 import thumt.modules as modules

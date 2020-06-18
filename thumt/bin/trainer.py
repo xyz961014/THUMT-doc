@@ -15,7 +15,6 @@ import six
 import socket
 import time
 import torch
-import ipdb
 
 import thumt.data as data
 import torch.distributed as dist

@@ -9,7 +9,6 @@ import math
 import torch
 
 import tensorflow as tf
-import ipdb
 
 from collections import namedtuple
 from thumt.utils.nest import map_structure
