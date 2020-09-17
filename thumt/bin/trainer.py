@@ -405,10 +405,13 @@ def main(args):
 
     def train_fn(inputs):
         features, labels = inputs
-        loss = model(features, labels)
-        return loss
+        loss, state = model(features, labels)
+        return loss, state
 
     counter = 0
+    state = None
+    if params.model == "cachedtransformer":
+        last_feature = None
 
     while True:
         start_time = time.time()
@@ -421,7 +424,10 @@ def main(args):
             counter += 1
             t = time.time()
             features = data.lookup(features, "train", params)
-            loss = train_fn(features)
+            if params.model == "cachedtransformer":
+                features = utils.update_cache(model, features, state, last_feature)
+                last_feature = features[0]
+            loss, state = train_fn(features)
             gradients = optimizer.compute_gradients(loss,
                                                     list(model.parameters()))
             grads_and_vars = optimizers.exclude_variables(
@@ -434,17 +440,17 @@ def main(args):
             summary.scalar("loss", loss, step, write_every_n_steps=1)
             summary.scalar("global_step/sec", t, step)
 
-            if step > 0 and step % args.log_interval == 0:
-                elapsed = time.time() - start_time
-                print('| epoch {:2d} | step {:8d} | lr {:02.2e} | '
-                      'ms/step {:4.0f} | loss {:8.4f} '.format(
-                    epoch + 1, step, 
-                    optimizer._optimizer._learning_rate(step),
-                    elapsed * 1000 / args.log_interval, 
-                    loss.item()))
-                start_time = time.time()
-
             if counter % params.update_cycle == 0:
+                if step > 0 and step % args.log_interval == 0:
+                    elapsed = time.time() - start_time
+                    print('| epoch {:2d} | step {:8d} | lr {:02.2e} | '
+                          'ms/step {:4.0f} | loss {:8.4f} '.format(
+                        epoch + 1, step, 
+                        optimizer._optimizer._learning_rate(step),
+                        elapsed * 1000 / args.log_interval, 
+                        loss.item()))
+                    start_time = time.time()
+
                 if step >= params.train_steps:
                     utils.evaluate(model, eval_dataset, params.output,
                                    references, params)
@@ -457,7 +463,7 @@ def main(args):
 
                 if step % params.eval_steps == 0:
                     utils.evaluate(model, eval_dataset, params.output,
-                                  references, params)
+                                   references, params)
                     start_time = time.time()
 
                 if step % params.save_checkpoint_steps == 0:

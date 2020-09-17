@@ -22,6 +22,7 @@ from thumt.utils.bleu import bleu
 from thumt.utils.bpe import BPE
 from thumt.utils.misc import get_global_step
 from thumt.utils.summary import scalar
+from thumt.utils.cache import update_cache
 
 from tqdm import tqdm
 
@@ -138,6 +139,12 @@ def _evaluate_model(model, dataset, references, params):
             pbar = tqdm(total=total_len)
             pbar.set_description("Validating model")
 
+        state = None
+        if params.model == "cachedtransformer":
+            last_feature = None
+            model.encoder.cache.set_batch_size(params.decode_batch_size)
+            model.decoder.cache.set_batch_size(params.decode_batch_size)
+
         while True:
             try:
                 features = next(iterator)
@@ -149,6 +156,10 @@ def _evaluate_model(model, dataset, references, params):
                     "source_mask": torch.ones([1, 1]).float()
                 }
                 batch_size = 0
+            finally:
+                if params.model == "cachedtransformer":
+                    features = update_cache(model, features, state, last_feature, evaluate=True)
+                    last_feature = features
 
             counter += 1
 
@@ -190,6 +201,9 @@ def _evaluate_model(model, dataset, references, params):
                 pbar.update(1)
 
     model.train()
+    if params.model == "cachedtransformer":
+        model.encoder.cache.set_batch_size(params.batch_size)
+        model.decoder.cache.set_batch_size(params.batch_size)
 
     if dist.get_rank() == 0:
         pbar.close()

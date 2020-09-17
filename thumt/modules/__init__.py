@@ -2,6 +2,7 @@ from thumt.modules.affine import Affine
 from thumt.modules.attention import Attention
 from thumt.modules.attention import MultiHeadAttention
 from thumt.modules.attention import MultiHeadAdditiveAttention
+from thumt.modules.attention import LearnableMultiHeadSelfAttention
 from thumt.modules.embedding import PositionalEmbedding
 from thumt.modules.feed_forward import FeedForward
 from thumt.modules.layer_norm import LayerNorm

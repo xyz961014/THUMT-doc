@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import thumt.utils as utils
 
 from thumt.modules.module import Module
@@ -274,3 +275,111 @@ class MultiHeadAdditiveAttention(MultiHeadAttentionBase):
             nn.init.uniform_(self.o_transform.bias, -0.04, 0.04)
         else:
             raise ValueError("Unknown initializer %d" % initializer)
+
+
+class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
+
+    def __init__(self, hidden_size, num_heads, dropout=0.0,
+                 name="learnable_multihead_selfattention"):
+        super().__init__(name=name)
+
+        self.num_heads = num_heads
+        self.hidden_size = hidden_size
+        self.dropout = dropout
+
+        with utils.scope(name):
+            self.q_transform = Affine(hidden_size, hidden_size,
+                                      name="q_transform")
+            self.k_transform = Affine(hidden_size, hidden_size,
+                                      name="k_transform")
+            self.v_transform = Affine(hidden_size, hidden_size,
+                                      name="v_transform")
+            self.r_transform = Affine(hidden_size, hidden_size,
+                                      name="r_transform")
+            self.o_transform = Affine(hidden_size, hidden_size,
+                                      name="o_transform")
+
+        self.reset_parameters()
+
+    def _rel_shift(self, x):
+        x_inp = x.reshape(x.size(0), -1, *x.size()[-2:])
+        zero_pad = x_inp.new_zeros((x_inp.size(0), 1, *x_inp.size()[2:]))
+        x_padded = torch.cat([zero_pad, x_inp], dim=1)
+
+        x_padded = x_padded.view(x_inp.size(1) + 1, x_inp.size(0), *x_inp.size()[2:])
+
+        x = x_padded[1:].view_as(x)
+
+        return x
+
+    def forward(self, x, bias, pos_emb, pos_bias_u, pos_bias_v, 
+                cache=None, indice_bool=None, weights=None, kv=None):
+
+        if cache is not None:
+            pass
+
+        # x: [batch_size, length, hidden_size]
+        q = self.q_transform(x)
+        k = self.k_transform(x)
+        v = self.v_transform(x)
+        r = self.r_transform(pos_emb.transpose(0, 1))
+
+        if kv is not None:
+            k = torch.cat([kv[0], k], dim=1)
+            v = torch.cat([kv[1], v], dim=1)
+
+        # split heads
+        qh = self.split_heads(q, self.num_heads)
+        kh = self.split_heads(k, self.num_heads)
+        vh = self.split_heads(v, self.num_heads)
+        rh = self.split_heads(r, self.num_heads)
+
+        # scale query
+        qh = qh * (self.hidden_size // self.num_heads) ** -0.5
+
+        quh = qh + pos_bias_u[None,:,None,:]
+        qvh = qh + pos_bias_v[None,:,None,:]
+
+        # dot-product attention
+        kh = kh.transpose(-2, -1)
+        rh = rh.transpose(-2, -1)
+        AC = torch.matmul(quh, kh)
+        BD = torch.matmul(qvh, rh)
+        BD = self._rel_shift(BD)
+        logits = AC + BD
+
+
+        if bias is not None:
+            logits = logits + bias
+
+        weights = F.dropout(torch.softmax(logits, dim=-1),
+                            p=self.dropout,
+                            training=self.training)
+
+        x = torch.matmul(weights, vh)
+
+        # combine heads
+        output = self.o_transform(self.combine_heads(x))
+
+        if kv is not None:
+            return output, k, v
+
+        return output
+
+    def reset_parameters(self, initializer="uniform_scaling", **kwargs):
+        if initializer == "uniform_scaling":
+            # 6 / (4 * hidden_size) -> 6 / (2 * hidden_size)
+            nn.init.xavier_uniform_(self.q_transform.weight, 2 ** -0.5)
+            nn.init.xavier_uniform_(self.k_transform.weight, 2 ** -0.5)
+            nn.init.xavier_uniform_(self.v_transform.weight, 2 ** -0.5)
+            nn.init.xavier_uniform_(self.r_transform.weight, 2 ** -0.5)
+            nn.init.xavier_uniform_(self.o_transform.weight)
+            nn.init.constant_(self.q_transform.bias, 0.0)
+            nn.init.constant_(self.k_transform.bias, 0.0)
+            nn.init.constant_(self.v_transform.bias, 0.0)
+            nn.init.constant_(self.r_transform.bias, 0.0)
+            nn.init.constant_(self.o_transform.bias, 0.0)
+        else:
+            raise ValueError("Unknown initializer %d" % initializer)
+
+

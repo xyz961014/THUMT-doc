@@ -302,7 +302,7 @@ class Transformer(modules.Module):
         state = self.empty_state(features["target"].shape[0],
                                  labels.device)
         state = self.encode(features, state)
-        logits, _ = self.decode(features, state, mode=mode)
+        logits, state = self.decode(features, state, mode=mode)
         loss = self.criterion(logits, labels)
         mask = mask.to(logits)
 
@@ -312,7 +312,7 @@ class Transformer(modules.Module):
             else:
                 return  torch.exp(-loss) * mask - (1 - mask)
 
-        return torch.sum(loss * mask) / torch.sum(mask)
+        return torch.sum(loss * mask) / torch.sum(mask), state
 
     def empty_state(self, batch_size, device):
         state = {

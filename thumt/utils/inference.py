@@ -8,8 +8,6 @@ from __future__ import print_function
 import math
 import torch
 
-import tensorflow as tf
-
 from collections import namedtuple
 from thumt.utils.nest import map_structure
 
@@ -55,8 +53,16 @@ def _get_inference_fn(model_fns, features):
             "source": features["source"],
             "source_mask": features["source_mask"],
             "target": inputs,
-            "target_mask": torch.ones(*inputs.shape).float().cuda()
+            "target_mask": torch.ones(*inputs.shape).float().cuda(),
         }
+
+        try:
+            local_features["source_cache_key"] = features["source_cache_key"]
+            local_features["source_cache_value"] = features["source_cache_value"]
+            local_features["target_cache_key"] = features["target_cache_key"]
+            local_features["target_cache_value"] = features["target_cache_value"]
+        except:
+            pass
 
         outputs = []
         next_state = []
