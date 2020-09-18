@@ -302,6 +302,7 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         self.reset_parameters()
 
     def _rel_shift(self, x):
+        x = x.permute(2, 3, 0, 1)
         x_inp = x.reshape(x.size(0), -1, *x.size()[-2:])
         zero_pad = x_inp.new_zeros((x_inp.size(0), 1, *x_inp.size()[2:]))
         x_padded = torch.cat([zero_pad, x_inp], dim=1)
@@ -309,6 +310,7 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         x_padded = x_padded.view(x_inp.size(1) + 1, x_inp.size(0), *x_inp.size()[2:])
 
         x = x_padded[1:].view_as(x)
+        x = x.permute(2, 3, 0, 1)
 
         return x
 
