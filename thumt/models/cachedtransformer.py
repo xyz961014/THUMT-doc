@@ -255,6 +255,8 @@ class CachedTransformerEncoder(modules.Module):
 
             # compute indice_bool
             indice_bool = indices
+        else:
+            indice_bool, weights = None, None
 
         ### compute attention ###
         pos_emb = self.compute_pos_emb(x)
@@ -341,6 +343,8 @@ class CachedTransformerDecoder(modules.Module):
             weights, indices = self.cache(query, cache_key)
             # compute indice_bool
             indice_bool = indices
+        else:
+            indice_bool, weights = None, None
 
         ### compute attention ###
         pos_emb = self.compute_pos_emb(x)
