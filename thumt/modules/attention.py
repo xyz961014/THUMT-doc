@@ -324,7 +324,7 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         q = self.q_transform(x)
         k = self.k_transform(x)
         v = self.v_transform(x)
-        #r = self.r_transform(pos_emb.transpose(0, 1))
+        r = self.r_transform(pos_emb.transpose(0, 1))
 
         if kv is not None:
             k = torch.cat([kv[0], k], dim=1)
@@ -334,22 +334,22 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         qh = self.split_heads(q, self.num_heads)
         kh = self.split_heads(k, self.num_heads)
         vh = self.split_heads(v, self.num_heads)
-        #rh = self.split_heads(r, self.num_heads)
+        rh = self.split_heads(r, self.num_heads)
 
         # scale query
         qh = qh * (self.hidden_size // self.num_heads) ** -0.5
 
-        #quh = qh + pos_bias_u[None,:,None,:]
-        #qvh = qh + pos_bias_v[None,:,None,:]
+        quh = qh + pos_bias_u[None,:,None,:]
+        qvh = qh + pos_bias_v[None,:,None,:]
 
         # dot-product attention
         kh = kh.transpose(-2, -1)
-        #rh = rh.transpose(-2, -1)
-        #AC = torch.matmul(quh, kh)
+        rh = rh.transpose(-2, -1)
+        AC = torch.matmul(quh, kh)
         #BD = torch.matmul(qvh, rh)
         #BD = self._rel_shift(BD)
         #logits = AC + BD
-        logits = torch.matmul(qh, kh)
+        logits = AC
 
 
         if bias is not None:
