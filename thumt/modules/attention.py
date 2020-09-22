@@ -346,10 +346,9 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         kh = kh.transpose(-2, -1)
         rh = rh.transpose(-2, -1)
         AC = torch.matmul(quh, kh)
-        #BD = torch.matmul(qvh, rh)
-        #BD = self._rel_shift(BD)
-        #logits = AC + BD
-        logits = AC
+        BD = torch.matmul(qvh, rh)
+        BD = self._rel_shift(BD)
+        logits = AC + BD
 
 
         if bias is not None:
