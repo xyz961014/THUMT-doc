@@ -246,17 +246,18 @@ class CachedTransformerEncoder(modules.Module):
 
     def forward(self, x, bias, cache_key=None, cache_value=None): 
 
-        if x.size(0) == cache_key.size(1):
-            ### compute query ###
-            query = self.compute_query(x, bias)
+        #if x.size(0) == cache_key.size(1):
+        #    ### compute query ###
+        #    query = self.compute_query(x, bias)
 
-            ### look up from cache ###
-            weights, indices = self.cache(query, cache_key)
+        #    ### look up from cache ###
+        #    weights, indices = self.cache(query, cache_key)
 
-            # compute indice_bool
-            indice_bool = indices
-        else:
-            indice_bool, weights = None, None
+        #    # compute indice_bool
+        #    indice_bool = indices
+        #else:
+        #    indice_bool, weights = None, None
+        indice_bool, weights = None, None
 
         ### compute attention ###
         pos_emb = self.compute_pos_emb(x)
@@ -332,19 +333,20 @@ class CachedTransformerDecoder(modules.Module):
     def forward(self, x, attn_bias, encdec_bias, memory, 
                 state=None, cache_key=None, cache_value=None):
 
-        if x.size(0) % cache_key.size(1) == 0:
-            ### compute query ###
-            query = self.compute_query(x, attn_bias, encdec_bias, memory, state)
+        #if x.size(0) % cache_key.size(1) == 0:
+        #    ### compute query ###
+        #    query = self.compute_query(x, attn_bias, encdec_bias, memory, state)
 
-            ### look up from cache ###
-            if not query.size(0) == self.cache.batch_size:
-                # in infer stage, query.size(0) = batch_size * beam_size 
-                query = query.reshape(self.cache.batch_size, -1, query.size(-1))
-            weights, indices = self.cache(query, cache_key)
-            # compute indice_bool
-            indice_bool = indices
-        else:
-            indice_bool, weights = None, None
+        #    ### look up from cache ###
+        #    if not query.size(0) == self.cache.batch_size:
+        #        # in infer stage, query.size(0) = batch_size * beam_size 
+        #        query = query.reshape(self.cache.batch_size, -1, query.size(-1))
+        #    weights, indices = self.cache(query, cache_key)
+        #    # compute indice_bool
+        #    indice_bool = indices
+        #else:
+        #    indice_bool, weights = None, None
+        indice_bool, weights = None, None
 
         ### compute attention ###
         pos_emb = self.compute_pos_emb(x)
