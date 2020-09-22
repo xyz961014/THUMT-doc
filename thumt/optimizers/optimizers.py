@@ -103,7 +103,7 @@ class Optimizer(object):
 
     def compute_gradients(self, loss, var_list, aggregate=False):
         var_list = list(var_list)
-        grads = [v.grad if v is not None else None for v in var_list]
+        grads = [v.grad if v.grad is not None else torch.zeros_like(v) if v is not None else None for v in var_list]
 
         self.detach_gradients(grads)
 
@@ -111,7 +111,7 @@ class Optimizer(object):
             self.zero_gradients(grads)
 
         loss.backward()
-        return [v.grad if v is not None else None for v in var_list]
+        return [v.grad if v.grad is not None else torch.zeros_like(v) if v is not None else None for v in var_list]
 
     def apply_gradients(self, grads_and_vars):
         raise NotImplementedError("Not implemented")
@@ -427,7 +427,7 @@ class LossScalingOptimizer(Optimizer):
 
     def compute_gradients(self, loss, var_list, aggregate=False):
         var_list = list(var_list)
-        grads = [v.grad if v is not None else None for v in var_list]
+        grads = [v.grad if v.grad is not None else torch.zeros_like(v) if v is not None else None for v in var_list]
 
         self.detach_gradients(grads)
 
@@ -437,7 +437,7 @@ class LossScalingOptimizer(Optimizer):
         loss = loss * self._scale
         loss.backward()
 
-        return [v.grad if v is not None else None for v in var_list]
+        return [v.grad if v.grad is not None else torch.zeros_like(v) if v is not None else None for v in var_list]
 
     def apply_gradients(self, grads_and_vars):
         self._iterations += 1
