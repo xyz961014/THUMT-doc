@@ -216,6 +216,7 @@ class CachedTransformerEncoder(modules.Module):
             if self.query_method == "single_linear":
                 self.query_transform = nn.Sequential(nn.Linear(params.hidden_size, self.cache_dk),
                                                      nn.Tanh())
+        self.reset_parameters()
 
     def compute_pos_emb(self, x, values=None):
         batch_size, seq_len = x.size(0), x.size(1)
@@ -270,6 +271,11 @@ class CachedTransformerEncoder(modules.Module):
 
         return x
 
+    def reset_parameters(self):
+        nn.init.normal_(self.pos_bias_u, mean=0.0,
+                        std=self.pos_bias_u.size(-1) ** -0.5)
+        nn.init.normal_(self.pos_bias_v, mean=0.0,
+                        std=self.pos_bias_v.size(-1) ** -0.5)
 
 class CachedTransformerDecoder(modules.Module):
 
@@ -297,6 +303,7 @@ class CachedTransformerDecoder(modules.Module):
             if self.query_method == "single_linear":
                 self.query_transform = nn.Sequential(nn.Linear(params.hidden_size, self.cache_dk),
                                                      nn.Tanh())
+        self.reset_parameters()
 
     def compute_pos_emb(self, x, values=None):
         batch_size, seq_len = x.size(0), x.size(1)
@@ -367,6 +374,12 @@ class CachedTransformerDecoder(modules.Module):
             x = self.layer_norm(x)
 
         return x
+
+    def reset_parameters(self):
+        nn.init.normal_(self.pos_bias_u, mean=0.0,
+                        std=self.pos_bias_u.size(-1) ** -0.5)
+        nn.init.normal_(self.pos_bias_v, mean=0.0,
+                        std=self.pos_bias_v.size(-1) ** -0.5)
 
 
 

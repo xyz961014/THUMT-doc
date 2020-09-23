@@ -339,10 +339,8 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         # scale query
         qh = qh * (self.hidden_size // self.num_heads) ** -0.5
 
-        #quh = qh + pos_bias_u[None,:,None,:]
-        #qvh = qh + pos_bias_v[None,:,None,:]
-        quh = qh
-        qvh = qh
+        quh = qh + pos_bias_u[:,None,:]
+        qvh = qh + pos_bias_v[:,None,:]
 
         # dot-product attention
         kh = kh.transpose(-2, -1)
