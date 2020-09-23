@@ -272,10 +272,8 @@ class CachedTransformerEncoder(modules.Module):
         return x
 
     def reset_parameters(self):
-        nn.init.normal_(self.pos_bias_u, mean=0.0,
-                        std=self.pos_bias_u.size(-1) ** -0.5)
-        nn.init.normal_(self.pos_bias_v, mean=0.0,
-                        std=self.pos_bias_v.size(-1) ** -0.5)
+        nn.init.constant_(self.pos_bias_u, 0.0)
+        nn.init.constant_(self.pos_bias_v, 0.0)
 
 class CachedTransformerDecoder(modules.Module):
 
@@ -376,11 +374,8 @@ class CachedTransformerDecoder(modules.Module):
         return x
 
     def reset_parameters(self):
-        nn.init.normal_(self.pos_bias_u, mean=0.0,
-                        std=self.pos_bias_u.size(-1) ** -0.5)
-        nn.init.normal_(self.pos_bias_v, mean=0.0,
-                        std=self.pos_bias_v.size(-1) ** -0.5)
-
+        nn.init.constant_(self.pos_bias_u, 0.0)
+        nn.init.constant_(self.pos_bias_v, 0.0)
 
 
 class CachedTransformer(modules.Module):
