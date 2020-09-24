@@ -424,7 +424,7 @@ def main(args):
             counter += 1
             t = time.time()
             features = data.lookup(features, "train", params)
-            if params.model == "cachedtransformer":
+            if model.name == "cachedtransformer":
                 features = utils.update_cache(model, features, state, last_feature)
                 last_feature = features[0]
             loss, state = train_fn(features)

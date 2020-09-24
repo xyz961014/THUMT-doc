@@ -20,6 +20,7 @@ import thumt.data as data
 import torch.distributed as dist
 import thumt.models as models
 import thumt.utils as utils
+from thumt.utils import update_cache
 
 
 def parse_args():
@@ -178,19 +179,6 @@ def main(args):
     with torch.no_grad():
         model_list = []
 
-        for i in range(len(args.models)):
-            model = model_cls_list[i](params_list[i]).cuda()
-
-            if args.half:
-                model = model.half()
-
-            model.eval()
-            model.load_state_dict(
-                torch.load(utils.latest_checkpoint(args.checkpoints[i]),
-                           map_location="cpu")["model"])
-
-            model_list.append(model)
-
         if len(args.input) == 1:
             mode = "infer"
             dataset = data.get_dataset(args.input[0], mode, params)
@@ -208,10 +196,32 @@ def main(args):
 
         # count eval dataset
         total_len = 0
-        for _ in iterator:
+        max_length = 0
+        for sample in iterator:
             total_len += 1
+            length = sample['source'].shape[1]
+            if length > max_length:
+                max_length = length
         iterator = iter(dataset)
 
+        for param in params_list:
+            if hasattr(param, "max_length"):
+                param.max_length = min(param.max_length, max_length)
+            else:
+                param.max_length = max_length
+
+        for i in range(len(args.models)):
+            model = model_cls_list[i](params_list[i]).cuda()
+
+            if args.half:
+                model = model.half()
+
+            model.eval()
+            model.load_state_dict(
+                torch.load(utils.latest_checkpoint(args.checkpoints[i]),
+                           map_location="cpu")["model"])
+
+            model_list.append(model)
 
         # Buffers for synchronization
         size = torch.zeros([dist.get_world_size()]).long()
@@ -224,6 +234,14 @@ def main(args):
             pbar.set_description("Translating to {}".format(args.output))
         else:
             fd = None
+
+        states = [None for _ in model_list]
+        if "cachedtransformer" in [model.name for model in model_list]:
+            last_features = [None for _ in model_list]
+        for model in model_list:
+            if model.name == "cachedtransformer":
+                model.encoder.cache.set_batch_size(params.decode_batch_size)
+                model.decoder.cache.set_batch_size(params.decode_batch_size)
 
         while True:
             try:
@@ -245,6 +263,11 @@ def main(args):
                     features["target_mask"] = torch.ones([1, 1]).float()
 
                 batch_size = 0
+            finally:
+                for im, model in enumerate(model_list):
+                    if model.name == "cachedtransformer":
+                        features = update_cache(model, features, states[im], last_features[im], evaluate=True)
+                        last_features[im] = features
 
             counter += 1
 

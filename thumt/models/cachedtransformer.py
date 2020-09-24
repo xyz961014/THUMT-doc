@@ -23,6 +23,18 @@ def compute_attention_weight(query, keys, scale=1.0):
 
     return weights
 
+def booleanize_indices(indices, cache_value):
+    cache_N = cache_value.size(0)
+    cache_k = indices.size(-1)
+    batch_size = indices.size(1)
+
+    boolean_base = torch.eye(cache_N, device=indices.device)
+    indice_bool = torch.index_select(boolean_base, 0, indices.reshape(-1))
+    indice_bool = indice_bool.view(-1, batch_size, cache_k, cache_N)
+    indice_bool = indice_bool.sum(2)
+
+    return indice_bool
+
 
 class PositionalEmbedding(modules.Module):
     def __init__(self, d_model, name="postional_embedding"):
@@ -84,14 +96,14 @@ class Cache(modules.Module):
     def __init__(self, params, name="cache"):
         super().__init__(name=name)
 
-        if name == "encodercache":
+        if name == "encoder_cache":
             self.update_method = params.src_update_method
             self.cache_N = params.src_cache_N
             self.cache_k = params.src_cache_k
             self.cache_dk = params.src_cache_dk
             self.summary_method = params.src_summary_method
             self.num_layers = params.num_encoder_layers
-        elif name == "decodercache":
+        elif name == "decoder_cache":
             self.update_method = params.tgt_update_method
             self.cache_N = params.tgt_cache_N
             self.cache_k = params.tgt_cache_k
@@ -131,7 +143,8 @@ class Cache(modules.Module):
         cache_value = torch.zeros(self.cache_N, 
                                   self.batch_size, 
                                   self.cache_L, 
-                                  self.hidden_size * (1 + self.num_layers)).cuda()
+                                  1 + self.num_layers,
+                                  self.hidden_size).cuda()
         return cache_key, cache_value
 
     def forward(self, query, keys):
@@ -192,14 +205,14 @@ class CachedTransformerDecoderLayer(modules.Module):
 
 class CachedTransformerEncoder(modules.Module):
 
-    def __init__(self, params, name="cachedencoder"):
+    def __init__(self, params, name="cached_encoder"):
         super().__init__(name=name)
 
         self.normalization = params.normalization
         self.query_method = params.src_query_method
 
         with utils.scope(name):
-            self.cache = Cache(params, name="encodercache")
+            self.cache = Cache(params, name="encoder_cache")
             self.layers = nn.ModuleList([CachedTransformerEncoderLayer(params, name="layer_%d" % i)
                                          for i in range(params.num_encoder_layers)])
             self.pos_emb = PositionalEmbedding(params.hidden_size)
@@ -220,6 +233,9 @@ class CachedTransformerEncoder(modules.Module):
 
     def compute_pos_emb(self, x, values=None):
         batch_size, seq_len = x.size(0), x.size(1)
+        if values is not None:
+            cache_len = values.size(0) * values.size(2)
+            seq_len += cache_len
         pos_seq = torch.arange(seq_len-1, -1, -1.0).to(x)
         pos_seq = pos_seq.expand(batch_size, -1)
         pos_emb = self.pos_emb(pos_seq)
@@ -247,24 +263,28 @@ class CachedTransformerEncoder(modules.Module):
 
     def forward(self, x, bias, cache_key=None, cache_value=None): 
 
-        #if x.size(0) == cache_key.size(1):
-        #    ### compute query ###
-        #    query = self.compute_query(x, bias)
+        if x.size(0) == cache_key.size(1):
+            ### compute query ###
+            query = self.compute_query(x, bias)
 
-        #    ### look up from cache ###
-        #    weights, indices = self.cache(query, cache_key)
+            ### look up from cache ###
+            weights, indices = self.cache(query, cache_key)
 
-        #    # compute indice_bool
-        #    indice_bool = indices
-        #else:
-        #    indice_bool, weights = None, None
-        indice_bool, weights = None, None
+            # compute indice_bool
+            indice_bool = booleanize_indices(indices, cache_value)
+        else:
+            indice_bool, weights, cache_value = None, None, None
 
         ### compute attention ###
-        pos_emb = self.compute_pos_emb(x)
-        for layer in self.layers:
+        pos_emb = self.compute_pos_emb(x, cache_value)
+        for i, layer in enumerate(self.layers):
+            if indice_bool is not None:
+                value_i = cache_value[:,:,:,i,:]
+            else:
+                value_i = None
+
             x = layer(x, bias, pos_emb, self.pos_bias_u, self.pos_bias_v,
-                      cache=cache_value, indice_bool=indice_bool, weights=weights)
+                      cache=value_i, indice_bool=indice_bool, weights=weights)
 
         if self.normalization == "before":
             x = self.layer_norm(x)
@@ -277,14 +297,14 @@ class CachedTransformerEncoder(modules.Module):
 
 class CachedTransformerDecoder(modules.Module):
 
-    def __init__(self, params, name="cacheddecoder"):
+    def __init__(self, params, name="cached_decoder"):
         super().__init__(name=name)
 
         self.normalization = params.normalization
         self.query_method = params.tgt_query_method
 
         with utils.scope(name):
-            self.cache = Cache(params, name="decodercache")
+            self.cache = Cache(params, name="decoder_cache")
             self.layers = nn.ModuleList([CachedTransformerDecoderLayer(params, name="layer_%d" % i)
                                          for i in range(params.num_decoder_layers)])
             self.pos_emb = PositionalEmbedding(params.hidden_size)
@@ -303,8 +323,14 @@ class CachedTransformerDecoder(modules.Module):
                                                      nn.Tanh())
         self.reset_parameters()
 
-    def compute_pos_emb(self, x, values=None):
+    def compute_pos_emb(self, x, values=None, k=None):
         batch_size, seq_len = x.size(0), x.size(1)
+        if values is not None:
+            cache_len = values.size(0) * values.size(2)
+            seq_len += cache_len
+        if k is not None:
+            k_len = k.size(1)
+            seq_len += k_len
         pos_seq = torch.arange(seq_len-1, -1, -1.0).to(x)
         pos_seq = pos_seq.expand(batch_size, -1)
         pos_emb = self.pos_emb(pos_seq)
@@ -338,33 +364,47 @@ class CachedTransformerDecoder(modules.Module):
     def forward(self, x, attn_bias, encdec_bias, memory, 
                 state=None, cache_key=None, cache_value=None):
 
-        #if x.size(0) % cache_key.size(1) == 0:
-        #    ### compute query ###
-        #    query = self.compute_query(x, attn_bias, encdec_bias, memory, state)
+        if x.size(0) % cache_key.size(1) == 0:
+            ### compute query ###
+            batch_size = x.size(0)
+            query = self.compute_query(x, attn_bias, encdec_bias, memory, state)
 
-        #    ### look up from cache ###
-        #    if not query.size(0) == self.cache.batch_size:
-        #        # in infer stage, query.size(0) = batch_size * beam_size 
-        #        query = query.reshape(self.cache.batch_size, -1, query.size(-1))
-        #    weights, indices = self.cache(query, cache_key)
-        #    # compute indice_bool
-        #    indice_bool = indices
-        #else:
-        #    indice_bool, weights = None, None
-        indice_bool, weights = None, None
+            ### look up from cache ###
+            if not batch_size == self.cache.batch_size:
+                # in infer stage, query.size(0) = batch_size * beam_size 
+                query = query.reshape(self.cache.batch_size, -1, query.size(-1))
+
+            weights, indices = self.cache(query, cache_key)
+
+            if not batch_size == self.cache.batch_size:
+                indices = indices.transpose(0, 1).reshape(-1, batch_size, self.cache.cache_k)
+                weights = weights.transpose(0, 1).reshape(-1, batch_size, self.cache.cache_N)
+            # compute indice_bool
+            indice_bool = booleanize_indices(indices, cache_value)
+        else:
+            indice_bool, weights, cache_value = None, None, None
 
         ### compute attention ###
-        pos_emb = self.compute_pos_emb(x)
+        if not self.training and state is not None:
+            k = state["decoder"]["layer_0"]["k"]
+            pos_emb = self.compute_pos_emb(x, cache_value, k)
+        else:
+            pos_emb = self.compute_pos_emb(x, cache_value)
         for i, layer in enumerate(self.layers):
+            if indice_bool is not None:
+                value_i = cache_value[:,:,:,i,:]
+            else:
+                value_i = None
+
             if state is not None:
                 x = layer(x, attn_bias, encdec_bias, memory, pos_emb, self.pos_bias_u, self.pos_bias_v,
-                          cache=cache_value,
+                          cache=value_i,
                           indice_bool=indice_bool,
                           weights=weights,
                           state=state["decoder"]["layer_%d" % i])
             else:
                 x = layer(x, attn_bias, encdec_bias, memory, pos_emb, self.pos_bias_u, self.pos_bias_v,
-                          cache=cache_value,
+                          cache=value_i,
                           indice_bool=indice_bool,
                           weights=weights)
 

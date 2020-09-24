@@ -315,12 +315,13 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         return x
 
     def forward(self, x, bias, pos_emb, pos_bias_u, pos_bias_v, 
-                cache=None, indice_bool=None, weights=None, kv=None):
-
-        if cache is not None:
-            pass
+                cache=None, indice_bool=None, sent_weights=None, kv=None):
 
         # x: [batch_size, length, hidden_size]
+        # in inference stage, the batch_size here is actually batch_size * beam_size
+        batch_size, x_len, hidden_size = x.size()
+        head_size = hidden_size // self.num_heads
+
         q = self.q_transform(x)
         k = self.k_transform(x)
         v = self.v_transform(x)
@@ -330,11 +331,41 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
             k = torch.cat([kv[0], k], dim=1)
             v = torch.cat([kv[1], v], dim=1)
 
+        k_len = k.size(1)
+
+        if cache is not None:
+            cache_N, cache_batch_size, cache_L = cache.size(0), cache.size(1), cache.size(2)
+            cache_len = cache_N * cache_L
+            cache = cache.transpose(0, 1).reshape(cache_batch_size, -1, hidden_size)
+            cache_k = self.k_transform(cache)
+            cache_v = self.v_transform(cache)
+
+            cache_kh = self.split_heads(cache_k, self.num_heads)
+            cache_vh = self.split_heads(cache_v, self.num_heads)
+            cache_kh = cache_kh.reshape(cache_batch_size, self.num_heads, cache_N, cache_L, head_size)
+            cache_vh = cache_vh.reshape(cache_batch_size, self.num_heads, cache_N, cache_L, head_size)
+            cache_kh = cache_kh.permute(2, 0, 1, 3, 4)
+            cache_vh = cache_vh.permute(2, 0, 1, 3, 4)
+            if not cache_batch_size == batch_size:
+                # in inference stage, expand cache to fit beam_size
+                beam_size = batch_size // cache_batch_size
+                cache_kh = cache_kh.unsqueeze(2).expand(-1, -1, beam_size, -1, -1, -1)
+                cache_kh = cache_kh.reshape(cache_N, -1, self.num_heads, cache_L, head_size)
+                cache_vh = cache_vh.unsqueeze(2).expand(-1, -1, beam_size, -1, -1, -1)
+                cache_vh = cache_vh.reshape(cache_N, -1, self.num_heads, cache_L, head_size)
+        else:
+            cache_len = 0        
+
         # split heads
         qh = self.split_heads(q, self.num_heads)
         kh = self.split_heads(k, self.num_heads)
         vh = self.split_heads(v, self.num_heads)
         rh = self.split_heads(r, self.num_heads)
+
+        if cache_len > 0:
+            cache_rh, rh = rh.split([cache_len, k_len], dim=2)
+            cache_rh = cache_rh.reshape(batch_size, self.num_heads, cache_N, cache_L, -1)
+            cache_rh = cache_rh.permute(2, 0, 1, 3, 4)
 
         # scale query
         qh = qh * (self.hidden_size // self.num_heads) ** -0.5
@@ -347,18 +378,50 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         rh = rh.transpose(-2, -1)
         AC = torch.matmul(quh, kh)
         BD = torch.matmul(qvh, rh)
+
+        if bias is not None:
+            AC = AC + bias
+
+        if indice_bool is not None:
+            pre_AC = torch.einsum("bnid,ibk->kbnid", quh, indice_bool)
+            pre_BD = torch.einsum("bnid,ibk->kbnid", qvh, indice_bool)
+
+            cache_kh = cache_kh.transpose(-2, -1)
+            cache_rh = cache_rh.transpose(-2, -1)
+            cache_AC = torch.matmul(pre_AC, cache_kh)
+            cache_BD = torch.matmul(pre_BD, cache_rh)
+
+            cache_AC = cache_AC.permute(1, 2, 3, 0, 4)
+            cache_BD = cache_BD.permute(1, 2, 3, 0, 4)
+            cache_AC = cache_AC.reshape(*cache_AC.size()[:3], -1)
+            cache_BD = cache_BD.reshape(*cache_BD.size()[:3], -1)
+
+            AC = torch.cat((cache_AC, AC), dim=-1)
+            BD = torch.cat((cache_BD, BD), dim=-1)
+
         BD = self._rel_shift(BD)
         logits = AC + BD
 
 
-        if bias is not None:
-            logits = logits + bias
-
         weights = F.dropout(torch.softmax(logits, dim=-1),
                             p=self.dropout,
                             training=self.training)
+        if cache_len > 0:
+            cache_weights, weights = weights.split([cache_len, k_len], dim=-1)
+            if sent_weights is not None:
+                cache_weights = cache_weights.reshape(*cache_weights.size()[:-1], cache_N, cache_L)
+                cache_weights = cache_weights.permute(3, 0, 1, 2, 4)
+                cache_weights = torch.einsum("kbnij,ibk->bnikj", cache_weights, sent_weights)
+                cache_weights = cache_weights.reshape(*cache_weights.size()[:-2], -1)
+
+            cache_vh = cache_vh.permute(1, 2, 0, 3, 4)
+            cache_vh = cache_vh.reshape(batch_size, self.num_heads, cache_len, -1)
+            cache_output = torch.matmul(cache_weights, cache_vh)
 
         x = torch.matmul(weights, vh)
+
+        if cache_len > 0:
+            x = x + cache_output
 
         # combine heads
         output = self.o_transform(self.combine_heads(x))
