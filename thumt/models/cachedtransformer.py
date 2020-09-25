@@ -209,10 +209,14 @@ class CachedTransformerEncoder(modules.Module):
         super().__init__(name=name)
 
         self.normalization = params.normalization
+        self.enable_cache = params.enable_encoder_cache
         self.query_method = params.src_query_method
 
         with utils.scope(name):
             self.cache = Cache(params, name="encoder_cache")
+            if self.query_method == "single_linear":
+                self.query_transform = nn.Sequential(nn.Linear(params.hidden_size, self.cache_dk),
+                                                     nn.Tanh())
             self.layers = nn.ModuleList([CachedTransformerEncoderLayer(params, name="layer_%d" % i)
                                          for i in range(params.num_encoder_layers)])
             self.pos_emb = PositionalEmbedding(params.hidden_size)
@@ -226,9 +230,6 @@ class CachedTransformerEncoder(modules.Module):
             else:
                 self.layer_norm = None
 
-            if self.query_method == "single_linear":
-                self.query_transform = nn.Sequential(nn.Linear(params.hidden_size, self.cache_dk),
-                                                     nn.Tanh())
         self.reset_parameters()
 
     def compute_pos_emb(self, x, values=None):
@@ -263,15 +264,18 @@ class CachedTransformerEncoder(modules.Module):
 
     def forward(self, x, bias, cache_key=None, cache_value=None): 
 
-        if x.size(0) == cache_key.size(1):
-            ### compute query ###
-            query = self.compute_query(x, bias)
+        if self.enable_cache:
+            if x.size(0) == cache_key.size(1):
+                ### compute query ###
+                query = self.compute_query(x, bias)
 
-            ### look up from cache ###
-            weights, indices = self.cache(query, cache_key)
+                ### look up from cache ###
+                weights, indices = self.cache(query, cache_key)
 
-            # compute indice_bool
-            indice_bool = booleanize_indices(indices, cache_value)
+                # compute indice_bool
+                indice_bool = booleanize_indices(indices, cache_value)
+            else:
+                indice_bool, weights, cache_value = None, None, None
         else:
             indice_bool, weights, cache_value = None, None, None
 
@@ -301,10 +305,14 @@ class CachedTransformerDecoder(modules.Module):
         super().__init__(name=name)
 
         self.normalization = params.normalization
+        self.enable_cache = params.enable_decoder_cache
         self.query_method = params.tgt_query_method
 
         with utils.scope(name):
             self.cache = Cache(params, name="decoder_cache")
+            if self.query_method == "single_linear":
+                self.query_transform = nn.Sequential(nn.Linear(params.hidden_size, self.cache_dk),
+                                                     nn.Tanh())
             self.layers = nn.ModuleList([CachedTransformerDecoderLayer(params, name="layer_%d" % i)
                                          for i in range(params.num_decoder_layers)])
             self.pos_emb = PositionalEmbedding(params.hidden_size)
@@ -318,9 +326,6 @@ class CachedTransformerDecoder(modules.Module):
             else:
                 self.layer_norm = None
 
-            if self.query_method == "single_linear":
-                self.query_transform = nn.Sequential(nn.Linear(params.hidden_size, self.cache_dk),
-                                                     nn.Tanh())
         self.reset_parameters()
 
     def compute_pos_emb(self, x, values=None, k=None):
@@ -363,24 +368,27 @@ class CachedTransformerDecoder(modules.Module):
 
     def forward(self, x, attn_bias, encdec_bias, memory, 
                 state=None, cache_key=None, cache_value=None):
+        
+        if self.enable_cache:
+            if x.size(0) % cache_key.size(1) == 0:
+                ### compute query ###
+                batch_size = x.size(0)
+                query = self.compute_query(x, attn_bias, encdec_bias, memory, state)
 
-        if x.size(0) % cache_key.size(1) == 0:
-            ### compute query ###
-            batch_size = x.size(0)
-            query = self.compute_query(x, attn_bias, encdec_bias, memory, state)
+                ### look up from cache ###
+                if not batch_size == self.cache.batch_size:
+                    # in infer stage, query.size(0) = batch_size * beam_size 
+                    query = query.reshape(self.cache.batch_size, -1, query.size(-1))
 
-            ### look up from cache ###
-            if not batch_size == self.cache.batch_size:
-                # in infer stage, query.size(0) = batch_size * beam_size 
-                query = query.reshape(self.cache.batch_size, -1, query.size(-1))
+                weights, indices = self.cache(query, cache_key)
 
-            weights, indices = self.cache(query, cache_key)
-
-            if not batch_size == self.cache.batch_size:
-                indices = indices.transpose(0, 1).reshape(-1, batch_size, self.cache.cache_k)
-                weights = weights.transpose(0, 1).reshape(-1, batch_size, self.cache.cache_N)
-            # compute indice_bool
-            indice_bool = booleanize_indices(indices, cache_value)
+                if not batch_size == self.cache.batch_size:
+                    indices = indices.transpose(0, 1).reshape(-1, batch_size, self.cache.cache_k)
+                    weights = weights.transpose(0, 1).reshape(-1, batch_size, self.cache.cache_N)
+                # compute indice_bool
+                indice_bool = booleanize_indices(indices, cache_value)
+            else:
+                indice_bool, weights, cache_value = None, None, None
         else:
             indice_bool, weights, cache_value = None, None, None
 
@@ -390,6 +398,7 @@ class CachedTransformerDecoder(modules.Module):
             pos_emb = self.compute_pos_emb(x, cache_value, k)
         else:
             pos_emb = self.compute_pos_emb(x, cache_value)
+
         for i, layer in enumerate(self.layers):
             if indice_bool is not None:
                 value_i = cache_value[:,:,:,i,:]
@@ -627,6 +636,8 @@ class CachedTransformer(modules.Module):
             tgt_query_method="single",
             tgt_summary_method="last_state",
             tgt_update_method="fifo",
+            enable_encoder_cache=True,
+            enable_decoder_cache=True,
             # Override default parameters
             warmup_steps=4000,
             train_steps=100000,
