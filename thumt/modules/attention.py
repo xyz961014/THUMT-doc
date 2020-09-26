@@ -279,13 +279,14 @@ class MultiHeadAdditiveAttention(MultiHeadAttentionBase):
 
 class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
 
-    def __init__(self, hidden_size, num_heads, dropout=0.0,
+    def __init__(self, hidden_size, num_heads, dropout=0.0, enable_rel_emb=True,
                  name="learnable_multihead_selfattention"):
         super().__init__(name=name)
 
         self.num_heads = num_heads
         self.hidden_size = hidden_size
         self.dropout = dropout
+        self.enable_rel_emb = enable_rel_emb
 
         with utils.scope(name):
             self.q_transform = Affine(hidden_size, hidden_size,
@@ -294,10 +295,11 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
                                       name="k_transform")
             self.v_transform = Affine(hidden_size, hidden_size,
                                       name="v_transform")
-            self.r_transform = Affine(hidden_size, hidden_size,
-                                      name="r_transform")
             self.o_transform = Affine(hidden_size, hidden_size,
                                       name="o_transform")
+            if self.enable_rel_emb:
+                self.r_transform = Affine(hidden_size, hidden_size,
+                                          name="r_transform")
 
         self.reset_parameters()
 
@@ -325,7 +327,8 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         q = self.q_transform(x)
         k = self.k_transform(x)
         v = self.v_transform(x)
-        r = self.r_transform(pos_emb.transpose(0, 1))
+        if self.enable_rel_emb:
+            r = self.r_transform(pos_emb.transpose(0, 1))
 
         if kv is not None:
             k = torch.cat([kv[0], k], dim=1)
@@ -360,9 +363,10 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         qh = self.split_heads(q, self.num_heads)
         kh = self.split_heads(k, self.num_heads)
         vh = self.split_heads(v, self.num_heads)
-        rh = self.split_heads(r, self.num_heads)
+        if self.enable_rel_emb:
+            rh = self.split_heads(r, self.num_heads)
 
-        if cache_len > 0:
+        if cache_len > 0 and self.enable_rel_emb:
             cache_rh, rh = rh.split([cache_len, k_len], dim=2)
             cache_rh = cache_rh.reshape(batch_size, self.num_heads, cache_N, cache_L, -1)
             cache_rh = cache_rh.permute(2, 0, 1, 3, 4)
@@ -370,37 +374,45 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         # scale query
         qh = qh * (self.hidden_size // self.num_heads) ** -0.5
 
-        quh = qh + pos_bias_u[:,None,:]
-        qvh = qh + pos_bias_v[:,None,:]
+
+        if self.enable_rel_emb:
+            quh = qh + pos_bias_u[:,None,:]
+            qvh = qh + pos_bias_v[:,None,:]
+        else:
+            quh = qh
+            qvh = qh
 
         # dot-product attention
         kh = kh.transpose(-2, -1)
-        rh = rh.transpose(-2, -1)
         AC = torch.matmul(quh, kh)
-        BD = torch.matmul(qvh, rh)
+        if self.enable_rel_emb:
+            rh = rh.transpose(-2, -1)
+            BD = torch.matmul(qvh, rh)
 
         if bias is not None:
             AC = AC + bias
 
         if indice_bool is not None:
             pre_AC = torch.einsum("bnid,ibk->kbnid", quh, indice_bool)
-            pre_BD = torch.einsum("bnid,ibk->kbnid", qvh, indice_bool)
-
             cache_kh = cache_kh.transpose(-2, -1)
-            cache_rh = cache_rh.transpose(-2, -1)
             cache_AC = torch.matmul(pre_AC, cache_kh)
-            cache_BD = torch.matmul(pre_BD, cache_rh)
-
             cache_AC = cache_AC.permute(1, 2, 3, 0, 4)
-            cache_BD = cache_BD.permute(1, 2, 3, 0, 4)
             cache_AC = cache_AC.reshape(*cache_AC.size()[:3], -1)
-            cache_BD = cache_BD.reshape(*cache_BD.size()[:3], -1)
-
             AC = torch.cat((cache_AC, AC), dim=-1)
-            BD = torch.cat((cache_BD, BD), dim=-1)
 
-        BD = self._rel_shift(BD)
-        logits = AC + BD
+            if self.enable_rel_emb:
+                pre_BD = torch.einsum("bnid,ibk->kbnid", qvh, indice_bool)
+                cache_rh = cache_rh.transpose(-2, -1)
+                cache_BD = torch.matmul(pre_BD, cache_rh)
+                cache_BD = cache_BD.permute(1, 2, 3, 0, 4)
+                cache_BD = cache_BD.reshape(*cache_BD.size()[:3], -1)
+                BD = torch.cat((cache_BD, BD), dim=-1)
+
+        if self.enable_rel_emb:
+            BD = self._rel_shift(BD)
+            logits = AC + BD
+        else:
+            logits = AC
 
 
         weights = F.dropout(torch.softmax(logits, dim=-1),
@@ -437,13 +449,14 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
             nn.init.xavier_uniform_(self.q_transform.weight, 2 ** -0.5)
             nn.init.xavier_uniform_(self.k_transform.weight, 2 ** -0.5)
             nn.init.xavier_uniform_(self.v_transform.weight, 2 ** -0.5)
-            nn.init.xavier_uniform_(self.r_transform.weight, 2 ** -0.5)
             nn.init.xavier_uniform_(self.o_transform.weight)
             nn.init.constant_(self.q_transform.bias, 0.0)
-            nn.init.constant_(self.k_transform.bias, 0.0)
             nn.init.constant_(self.v_transform.bias, 0.0)
-            nn.init.constant_(self.r_transform.bias, 0.0)
+            nn.init.constant_(self.k_transform.bias, 0.0)
             nn.init.constant_(self.o_transform.bias, 0.0)
+            if self.enable_rel_emb:
+                nn.init.xavier_uniform_(self.r_transform.weight, 2 ** -0.5)
+                nn.init.constant_(self.r_transform.bias, 0.0)
         else:
             raise ValueError("Unknown initializer %d" % initializer)
 

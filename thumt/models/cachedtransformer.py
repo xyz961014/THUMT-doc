@@ -65,7 +65,8 @@ class LearnableSelfAttentionSubLayer(modules.Module):
         with utils.scope(name):
             self.attention = modules.LearnableMultiHeadSelfAttention(params.hidden_size, 
                                                                      params.num_heads, 
-                                                                     params.attention_dropout)
+                                                                     params.attention_dropout,
+                                                                     params.enable_relative_postional_embedding)
             self.layer_norm = modules.LayerNorm(params.hidden_size)
 
     def forward(self, x, bias, pos_emb, pos_bias_u, pos_bias_v, 
@@ -210,6 +211,7 @@ class CachedTransformerEncoder(modules.Module):
 
         self.normalization = params.normalization
         self.enable_cache = params.enable_encoder_cache
+        self.enable_relative_postional_embedding = params.enable_relative_postional_embedding
         self.query_method = params.src_query_method
 
         with utils.scope(name):
@@ -219,11 +221,14 @@ class CachedTransformerEncoder(modules.Module):
                                                      nn.Tanh())
             self.layers = nn.ModuleList([CachedTransformerEncoderLayer(params, name="layer_%d" % i)
                                          for i in range(params.num_encoder_layers)])
-            self.pos_emb = PositionalEmbedding(params.hidden_size)
-            self.pos_bias_u = nn.Parameter(torch.Tensor(params.num_heads, params.hidden_size // params.num_heads))
-            self.pos_bias_v = nn.Parameter(torch.Tensor(params.num_heads, params.hidden_size // params.num_heads))
-            self.add_name(self.pos_bias_u, "pos_bias_u")
-            self.add_name(self.pos_bias_v, "pos_bias_v")
+            if params.enable_relative_postional_embedding:
+                self.pos_emb = PositionalEmbedding(params.hidden_size)
+                self.pos_bias_u = nn.Parameter(torch.Tensor(params.num_heads, params.hidden_size // params.num_heads))
+                self.pos_bias_v = nn.Parameter(torch.Tensor(params.num_heads, params.hidden_size // params.num_heads))
+                self.add_name(self.pos_bias_u, "pos_bias_u")
+                self.add_name(self.pos_bias_v, "pos_bias_v")
+            else:
+                self.pos_bias_u, self.pos_bias_v = None, None
 
             if self.normalization == "before":
                 self.layer_norm = modules.LayerNorm(params.hidden_size)
@@ -233,15 +238,18 @@ class CachedTransformerEncoder(modules.Module):
         self.reset_parameters()
 
     def compute_pos_emb(self, x, values=None):
-        batch_size, seq_len = x.size(0), x.size(1)
-        if values is not None:
-            cache_len = values.size(0) * values.size(2)
-            seq_len += cache_len
-        pos_seq = torch.arange(seq_len-1, -1, -1.0).to(x)
-        pos_seq = pos_seq.expand(batch_size, -1)
-        pos_emb = self.pos_emb(pos_seq)
-        #?pos_emb dropout
-        return pos_emb
+        if self.enable_relative_postional_embedding:
+            batch_size, seq_len = x.size(0), x.size(1)
+            if values is not None:
+                cache_len = values.size(0) * values.size(2)
+                seq_len += cache_len
+            pos_seq = torch.arange(seq_len-1, -1, -1.0).to(x)
+            pos_seq = pos_seq.expand(batch_size, -1)
+            pos_emb = self.pos_emb(pos_seq)
+            #?pos_emb dropout
+            return pos_emb
+        else:
+            return None
 
     def compute_query(self, x, bias):
 
@@ -296,8 +304,9 @@ class CachedTransformerEncoder(modules.Module):
         return x
 
     def reset_parameters(self):
-        nn.init.constant_(self.pos_bias_u, 0.0)
-        nn.init.constant_(self.pos_bias_v, 0.0)
+        if self.enable_relative_postional_embedding:
+            nn.init.constant_(self.pos_bias_u, 0.0)
+            nn.init.constant_(self.pos_bias_v, 0.0)
 
 class CachedTransformerDecoder(modules.Module):
 
@@ -306,6 +315,7 @@ class CachedTransformerDecoder(modules.Module):
 
         self.normalization = params.normalization
         self.enable_cache = params.enable_decoder_cache
+        self.enable_relative_postional_embedding = params.enable_relative_postional_embedding
         self.query_method = params.tgt_query_method
 
         with utils.scope(name):
@@ -315,11 +325,14 @@ class CachedTransformerDecoder(modules.Module):
                                                      nn.Tanh())
             self.layers = nn.ModuleList([CachedTransformerDecoderLayer(params, name="layer_%d" % i)
                                          for i in range(params.num_decoder_layers)])
-            self.pos_emb = PositionalEmbedding(params.hidden_size)
-            self.pos_bias_u = nn.Parameter(torch.Tensor(params.num_heads, params.hidden_size // params.num_heads))
-            self.pos_bias_v = nn.Parameter(torch.Tensor(params.num_heads, params.hidden_size // params.num_heads))
-            self.add_name(self.pos_bias_u, "pos_bias_u")
-            self.add_name(self.pos_bias_v, "pos_bias_v")
+            if params.enable_relative_postional_embedding:
+                self.pos_emb = PositionalEmbedding(params.hidden_size)
+                self.pos_bias_u = nn.Parameter(torch.Tensor(params.num_heads, params.hidden_size // params.num_heads))
+                self.pos_bias_v = nn.Parameter(torch.Tensor(params.num_heads, params.hidden_size // params.num_heads))
+                self.add_name(self.pos_bias_u, "pos_bias_u")
+                self.add_name(self.pos_bias_v, "pos_bias_v")
+            else:
+                self.pos_bias_u, self.pos_bias_v = None, None
 
             if self.normalization == "before":
                 self.layer_norm = modules.LayerNorm(params.hidden_size)
@@ -329,18 +342,21 @@ class CachedTransformerDecoder(modules.Module):
         self.reset_parameters()
 
     def compute_pos_emb(self, x, values=None, k=None):
-        batch_size, seq_len = x.size(0), x.size(1)
-        if values is not None:
-            cache_len = values.size(0) * values.size(2)
-            seq_len += cache_len
-        if k is not None:
-            k_len = k.size(1)
-            seq_len += k_len
-        pos_seq = torch.arange(seq_len-1, -1, -1.0).to(x)
-        pos_seq = pos_seq.expand(batch_size, -1)
-        pos_emb = self.pos_emb(pos_seq)
-        #?pos_emb dropout
-        return pos_emb
+        if self.enable_relative_postional_embedding:
+            batch_size, seq_len = x.size(0), x.size(1)
+            if values is not None:
+                cache_len = values.size(0) * values.size(2)
+                seq_len += cache_len
+            if k is not None:
+                k_len = k.size(1)
+                seq_len += k_len
+            pos_seq = torch.arange(seq_len-1, -1, -1.0).to(x)
+            pos_seq = pos_seq.expand(batch_size, -1)
+            pos_emb = self.pos_emb(pos_seq)
+            #?pos_emb dropout
+            return pos_emb
+        else:
+            return None
 
     def compute_query(self, x, attn_bias, encdec_bias, memory, state):
 
@@ -423,8 +439,9 @@ class CachedTransformerDecoder(modules.Module):
         return x
 
     def reset_parameters(self):
-        nn.init.constant_(self.pos_bias_u, 0.0)
-        nn.init.constant_(self.pos_bias_v, 0.0)
+        if self.enable_relative_postional_embedding:
+            nn.init.constant_(self.pos_bias_u, 0.0)
+            nn.init.constant_(self.pos_bias_v, 0.0)
 
 
 class CachedTransformer(modules.Module):
@@ -435,6 +452,7 @@ class CachedTransformer(modules.Module):
 
         with utils.scope(name):
             self.build_embedding(params)
+            self.encoding = modules.PositionalEmbedding()
             self.encoder = CachedTransformerEncoder(params)
             self.decoder = CachedTransformerDecoder(params)
 
@@ -443,6 +461,7 @@ class CachedTransformer(modules.Module):
         self.hidden_size = params.hidden_size
         self.num_encoder_layers = params.num_encoder_layers
         self.num_decoder_layers = params.num_decoder_layers
+        self.enable_relative_postional_embedding = params.enable_relative_postional_embedding
         self.reset_parameters()
 
     def build_embedding(self, params):
@@ -514,6 +533,8 @@ class CachedTransformer(modules.Module):
         inputs = F.embedding(src_seq, self.src_embedding)
         inputs = inputs * (self.hidden_size ** 0.5)
         inputs = inputs + self.bias
+        if not self.enable_relative_postional_embedding:
+            inputs = self.encoding(inputs)
         inputs = F.dropout(inputs, self.dropout, self.training)
             #? could consider fixed dropout 
 
@@ -539,6 +560,8 @@ class CachedTransformer(modules.Module):
         decoder_input = torch.cat(
             [targets.new_zeros([targets.shape[0], 1, targets.shape[-1]]),
              targets[:, 1:, :]], dim=1)
+        if not self.enable_relative_postional_embedding:
+            decoder_input = self.encoding(decoder_input)
         decoder_input = F.dropout(decoder_input, self.dropout, self.training)
             #? could consider fixed dropout 
 
@@ -638,6 +661,7 @@ class CachedTransformer(modules.Module):
             tgt_update_method="fifo",
             enable_encoder_cache=True,
             enable_decoder_cache=True,
+            enable_relative_postional_embedding=True,
             # Override default parameters
             warmup_steps=4000,
             train_steps=100000,
