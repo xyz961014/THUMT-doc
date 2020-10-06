@@ -426,7 +426,8 @@ def main(args):
             features = data.lookup(features, "train", params)
             if model.name == "cachedtransformer":
                 features = utils.update_cache(model, features, state, last_feature)
-                features = utils.update_starts(params, features, state, last_feature)
+                if not params.enable_relative_positional_embedding:
+                    features = utils.update_starts(params, features, state, last_feature)
                 last_feature = features[0]
             loss, state = train_fn(features)
             gradients = optimizer.compute_gradients(loss,

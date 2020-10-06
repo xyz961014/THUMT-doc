@@ -159,7 +159,8 @@ def _evaluate_model(model, dataset, references, params):
             finally:
                 if params.model == "cachedtransformer":
                     features = update_cache(model, features, state, last_feature, evaluate=True)
-                    features = update_starts(params, features, state, last_feature, evaluate=True)
+                    if not params.enable_relative_positional_embedding:
+                        features = update_starts(params, features, state, last_feature, evaluate=True)
                     last_feature = features
 
             counter += 1
