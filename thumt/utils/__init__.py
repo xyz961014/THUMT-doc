@@ -4,5 +4,5 @@ from thumt.utils.evaluation import evaluate
 from thumt.utils.checkpoint import save, latest_checkpoint
 from thumt.utils.scope import scope, get_scope, unique_name
 from thumt.utils.misc import get_global_step, set_global_step
-from thumt.utils.cache import update_cache
+from thumt.utils.cache import update_cache, update_starts
 from thumt.utils.convert_params import parameters_to_vector, vector_to_parameters

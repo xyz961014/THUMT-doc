@@ -22,7 +22,7 @@ from thumt.utils.bleu import bleu
 from thumt.utils.bpe import BPE
 from thumt.utils.misc import get_global_step
 from thumt.utils.summary import scalar
-from thumt.utils.cache import update_cache
+from thumt.utils.cache import update_cache, update_starts
 
 from tqdm import tqdm
 
@@ -159,12 +159,14 @@ def _evaluate_model(model, dataset, references, params):
             finally:
                 if params.model == "cachedtransformer":
                     features = update_cache(model, features, state, last_feature, evaluate=True)
+                    features = update_starts(params, features, state, last_feature, evaluate=True)
                     last_feature = features
 
             counter += 1
 
             # Decode
-            seqs, _ = beam_search([model], features, params)
+            seqs, _, states = beam_search([model], features, params)
+            state = states[0]
 
             # Padding
             seqs = torch.squeeze(seqs, dim=1)

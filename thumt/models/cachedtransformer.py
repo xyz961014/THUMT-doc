@@ -125,6 +125,7 @@ class Cache(modules.Module):
             self.summary = nn.Linear(self.cache_L, 1, bias=False)
         elif self.summary_method == "conv":
             self.cache_dk = params.hidden_size
+            self.num_heads = params.num_heads
             self.summary = nn.Conv1d(params.num_heads, params.num_heads, 
                                      params.hidden_size // params.num_heads, 
                                      stride=self.cache_L, 
@@ -146,6 +147,11 @@ class Cache(modules.Module):
                                   self.cache_L, 
                                   1 + self.num_layers,
                                   self.hidden_size).cuda()
+        #cache_value = [torch.zeros(self.batch_size, 
+        #                           self.cache_L, 
+        #                           1 + self.num_layers,
+        #                           self.hidden_size).cuda()
+        #               for _ in range(self.cache_N)]
         return cache_key, cache_value
 
     def forward(self, query, keys):
@@ -161,9 +167,53 @@ class Cache(modules.Module):
 
     def update_cache(self, key, value, hidden_state):
 
-        new_key, new_value = key, value
+        # key dimension:   [cache_N, batch_size, cache_dk]
+        # value dimension: [cache_N, batch_size, cache_L, 1 + num_layers, hidden_size]
+        key_blocks = list(key.split(1))
+        value_blocks = list(value.split(1))
 
-        return new_key, new_value
+        # eliminate an old one
+        if self.update_method == "fifo":
+            key_blocks, value_blocks = self.fifo(key_blocks, value_blocks)
+        
+        # compute new key
+        top_layer = hidden_state[:,:,-1,:]
+        if self.summary_method == "sum":
+            new_key = top_layer.sum(dim=1)
+        elif self.summary_method == "max":
+            new_key, _ = top_layer.max(dim=1)
+        elif self.summary_method == "mean":
+            new_key = top_layer.mean(dim=-1)
+        elif self.summary_method == "last_state":
+            new_key = top_layer[:,-1,:]
+        elif self.summary_method == "weighted_sum":
+            new_key = self.summary(top_layer.transpose(-2, -1)).squeeze(-1)
+        elif self.summary_method == "conv":
+            key_base = top_layer.reshape(*top_layer.size()[:2], self.num_heads, -1).transpose(1, 2)
+            key_base = key_base.reshape(*key_base.size()[:2], -1)
+            new_key = self.summary(key_base).reshape(key_base.size(0), -1)
+        elif self.summary_method == "linear":
+            new_key = self.summary(top_layer.reshape(-1, self.cache_L * self.hidden_size))
+
+        new_value = F.pad(hidden_state, (0, 0, 0, 0, 0, self.cache_L - hidden_state.size(-3)))
+
+        key_blocks[-1] = new_key.unsqueeze(0).detach()
+        value_blocks[-1] = new_value.unsqueeze(0).detach()
+        
+        key = torch.cat(key_blocks, 0)
+        value = torch.cat(value_blocks, 0)
+
+        return key, value
+    
+    def fifo(self, key_blocks, value_blocks):
+
+        for i in range(self.cache_N - 1):
+            key_blocks[i] = key_blocks[i+1]
+            value_blocks[i] = value_blocks[i+1]
+        key_blocks[-1] = torch.zeros_like(key_blocks[0])
+        value_blocks[-1] = torch.zeros_like(value_blocks[0])
+
+        return key_blocks, value_blocks
 
 
 class CachedTransformerEncoderLayer(modules.Module):
@@ -289,6 +339,8 @@ class CachedTransformerEncoder(modules.Module):
 
         ### compute attention ###
         pos_emb = self.compute_pos_emb(x, cache_value)
+        hidden = [x.unsqueeze(-2)]
+
         for i, layer in enumerate(self.layers):
             if indice_bool is not None:
                 value_i = cache_value[:,:,:,i,:]
@@ -297,11 +349,14 @@ class CachedTransformerEncoder(modules.Module):
 
             x = layer(x, bias, pos_emb, self.pos_bias_u, self.pos_bias_v,
                       cache=value_i, indice_bool=indice_bool, weights=weights)
+            hidden.append(x.unsqueeze(-2))
+
+        hidden = torch.cat(hidden, dim=-2)
 
         if self.normalization == "before":
             x = self.layer_norm(x)
 
-        return x
+        return x, hidden
 
     def reset_parameters(self):
         if self.enable_relative_positional_embedding:
@@ -414,6 +469,7 @@ class CachedTransformerDecoder(modules.Module):
             pos_emb = self.compute_pos_emb(x, cache_value, k)
         else:
             pos_emb = self.compute_pos_emb(x, cache_value)
+        hidden = [x.unsqueeze(-2)]
 
         for i, layer in enumerate(self.layers):
             if indice_bool is not None:
@@ -432,11 +488,13 @@ class CachedTransformerDecoder(modules.Module):
                           cache=value_i,
                           indice_bool=indice_bool,
                           weights=weights)
+            hidden.append(x.unsqueeze(-2))
+        hidden = torch.cat(hidden, dim=-2)
 
         if self.normalization == "before":
             x = self.layer_norm(x)
 
-        return x
+        return x, hidden
 
     def reset_parameters(self):
         if self.enable_relative_positional_embedding:
@@ -452,7 +510,7 @@ class CachedTransformer(modules.Module):
 
         with utils.scope(name):
             self.build_embedding(params)
-            self.encoding = modules.PositionalEmbedding()
+            self.encoding = modules.BatchWisePositionalEmbedding()
             self.encoder = CachedTransformerEncoder(params)
             self.decoder = CachedTransformerDecoder(params)
 
@@ -534,13 +592,17 @@ class CachedTransformer(modules.Module):
         inputs = inputs * (self.hidden_size ** 0.5)
         inputs = inputs + self.bias
         if not self.enable_relative_positional_embedding:
-            inputs = self.encoding(inputs)
+            src_starts = features["source_starts"]
+            if inputs.size(0) == src_starts.size(0): 
+                inputs = self.encoding(inputs, starts=src_starts)
+                state["source_starts"] = src_mask.sum(1).int()
         inputs = F.dropout(inputs, self.dropout, self.training)
             #? could consider fixed dropout 
 
         enc_attn_bias = enc_attn_bias.to(inputs)
-        encoder_output = self.encoder(inputs, enc_attn_bias, src_cache_key, src_cache_value)
+        encoder_output, encoder_hidden = self.encoder(inputs, enc_attn_bias, src_cache_key, src_cache_value)
 
+        state["encoder_hidden"] = encoder_hidden
         state["encoder_output"] = encoder_output
         state["enc_attn_bias"] = enc_attn_bias
 
@@ -561,7 +623,14 @@ class CachedTransformer(modules.Module):
             [targets.new_zeros([targets.shape[0], 1, targets.shape[-1]]),
              targets[:, 1:, :]], dim=1)
         if not self.enable_relative_positional_embedding:
-            decoder_input = self.encoding(decoder_input)
+            tgt_starts = features["target_starts"]
+            if decoder_input.size(0) % tgt_starts.size(0) == 0:
+                if mode == "infer":
+                    tgt_starts = tgt_starts.expand(decoder_input.size(0) // tgt_starts.size(0), -1).reshape(-1)
+                decoder_input = self.encoding(decoder_input, starts=tgt_starts)
+                if not mode == "infer":
+                    # in inference statge, the update of target_starts is in beam_search
+                    state["target_starts"] = features["target_mask"].sum(1).int()
         decoder_input = F.dropout(decoder_input, self.dropout, self.training)
             #? could consider fixed dropout 
 
@@ -572,10 +641,10 @@ class CachedTransformer(modules.Module):
             decoder_input = decoder_input[:, -1:, :]
             dec_attn_bias = dec_attn_bias[:, :, -1:, :]
 
-        decoder_output = self.decoder(decoder_input, dec_attn_bias,
-                                      enc_attn_bias, encoder_output, state,
-                                      tgt_cache_key, tgt_cache_value)
-        state["decoder_output"] = decoder_output
+        decoder_output, decoder_hidden = self.decoder(decoder_input, dec_attn_bias,
+                                                      enc_attn_bias, encoder_output, state,
+                                                      tgt_cache_key, tgt_cache_value)
+        state["decoder_hidden"] = decoder_hidden
 
         decoder_output = torch.reshape(decoder_output, [-1, self.hidden_size])
         decoder_output = torch.transpose(decoder_output, -1, -2)

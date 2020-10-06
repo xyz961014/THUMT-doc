@@ -273,7 +273,7 @@ def main(args):
 
             # Decode
             if mode != "eval":
-                seqs, _ = utils.beam_search(model_list, features, params)
+                seqs, _, states = utils.beam_search(model_list, features, params)
             else:
                 seqs, _ = utils.argmax_decoding(model_list, features, params)
 

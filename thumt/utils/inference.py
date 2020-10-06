@@ -61,6 +61,8 @@ def _get_inference_fn(model_fns, features):
             local_features["source_cache_value"] = features["source_cache_value"]
             local_features["target_cache_key"] = features["target_cache_key"]
             local_features["target_cache_value"] = features["target_cache_value"]
+            local_features["source_starts"] = features["source_starts"]
+            local_features["target_starts"] = features["target_starts"]
         except:
             pass
 
@@ -259,11 +261,18 @@ def beam_search(models, features, params):
     final_seqs = torch.where(final_flags[:, :, None], final_seqs, alive_seqs)
     final_scores = torch.where(final_flags, final_scores, alive_scores)
 
+    final_lens = final_seqs[:,0,1:].eq(pad_id).sum(1).int()
     # Append extra <eos>
     final_seqs = torch.nn.functional.pad(final_seqs, (0, 1, 0, 0, 0, 0),
                                          value=eos_id)
 
-    return final_seqs[:, :top_beams, 1:], final_scores[:, :top_beams]
+    first_beam_states = map_structure(lambda x: x[:,0], final_state.state) 
+    # update target starts according to actuall length
+    for i, fb_state in enumerate(first_beam_states):
+        first_beam_states[i]["target_starts"] = final_lens
+
+
+    return final_seqs[:, :top_beams, 1:], final_scores[:, :top_beams], first_beam_states
 
 
 def argmax_decoding(models, features, params):
