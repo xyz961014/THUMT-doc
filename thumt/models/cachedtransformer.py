@@ -169,6 +169,13 @@ class Cache(modules.Module):
 
         # key dimension:   [cache_N, batch_size, cache_dk]
         # value dimension: [cache_N, batch_size, cache_L, 1 + num_layers, hidden_size]
+
+        if not key.size(1) == hidden_state.size(0):
+            # do not update cache if batch_size does not match
+            print("batch_size not match when update cache, with key/value batch_size %s and hidden batch_size %s" % 
+                  (key.size(1), hidden_state.size(0)))
+            return key, value
+
         key_blocks = list(key.split(1))
         value_blocks = list(value.split(1))
 
