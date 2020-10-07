@@ -35,7 +35,7 @@ def update_cache(model, features, state, last_feature, evaluate=False):
     return features
 
 def update_starts(params, features, state, last_feature, evaluate=False):
-    if state is not None:
+    if state is not None and "source_starts" in state.keys() and "target_starts" in state.keys():
         # update starts position
         src_starts = last_feature["source_starts"] + state["source_starts"]
         tgt_starts = last_feature["target_starts"] + state["target_starts"]
