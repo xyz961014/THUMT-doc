@@ -636,7 +636,7 @@ class CachedTransformer(modules.Module):
             if decoder_input.size(0) % tgt_starts.size(0) == 0:
                 if mode == "infer":
                     tgt_starts = tgt_starts.expand(decoder_input.size(0) // tgt_starts.size(0), -1).reshape(-1)
-                if decoder_inputs.size(0) == tgt_starts.size(0): 
+                if decoder_input.size(0) == tgt_starts.size(0): 
                     decoder_input = self.encoding(decoder_input, starts=tgt_starts)
                 if not mode == "infer":
                     # in inference statge, the update of target_starts is in beam_search
