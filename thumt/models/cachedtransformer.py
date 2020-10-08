@@ -24,7 +24,7 @@ def compute_attention_weight(query, keys, scale=1.0):
     return weights
 
 def booleanize_indices(indices, cache_value):
-    cache_N = cache_value.size(0)
+    cache_N = len(cache_value)
     cache_k = indices.size(-1)
     batch_size = indices.size(1)
 
@@ -142,16 +142,16 @@ class Cache(modules.Module):
 
     def new_key_and_value(self):
         cache_key = torch.zeros(self.cache_N, self.batch_size, self.cache_dk).cuda()
-        cache_value = torch.zeros(self.cache_N, 
-                                  self.batch_size, 
-                                  self.cache_L, 
-                                  1 + self.num_layers,
-                                  self.hidden_size).cuda()
-        #cache_value = [torch.zeros(self.batch_size, 
-        #                           self.cache_L, 
-        #                           1 + self.num_layers,
-        #                           self.hidden_size).cuda()
-        #               for _ in range(self.cache_N)]
+        #cache_value = torch.zeros(self.cache_N, 
+        #                          self.batch_size, 
+        #                          self.cache_L, 
+        #                          1 + self.num_layers,
+        #                          self.hidden_size).cuda()
+        cache_value = [torch.zeros(self.batch_size, 
+                                   0, 
+                                   1 + self.num_layers,
+                                   self.hidden_size).cuda()
+                       for _ in range(self.cache_N)]
         return cache_key, cache_value
 
     def forward(self, query, keys):
@@ -177,7 +177,8 @@ class Cache(modules.Module):
             return key, value
 
         key_blocks = list(key.split(1))
-        value_blocks = list(value.split(1))
+        #value_blocks = list(value.split(1))
+        value_blocks = value
 
         # eliminate an old one
         if self.update_method == "fifo":
@@ -205,10 +206,11 @@ class Cache(modules.Module):
         new_value = F.pad(hidden_state, (0, 0, 0, 0, 0, self.cache_L - hidden_state.size(-3)))
 
         key_blocks[-1] = new_key.unsqueeze(0).detach()
-        value_blocks[-1] = new_value.unsqueeze(0).detach()
+        value_blocks[-1] = new_value.detach()
         
         key = torch.cat(key_blocks, 0)
-        value = torch.cat(value_blocks, 0)
+        #value = torch.cat(value_blocks, 0)
+        value = value_blocks
 
         return key, value
     
@@ -298,7 +300,7 @@ class CachedTransformerEncoder(modules.Module):
         if self.enable_relative_positional_embedding:
             batch_size, seq_len = x.size(0), x.size(1)
             if values is not None:
-                cache_len = values.size(0) * values.size(2)
+                cache_len = sum([value.size(1) for value in values])
                 seq_len += cache_len
             pos_seq = torch.arange(seq_len-1, -1, -1.0).to(x)
             pos_seq = pos_seq.expand(batch_size, -1)
@@ -350,7 +352,7 @@ class CachedTransformerEncoder(modules.Module):
 
         for i, layer in enumerate(self.layers):
             if indice_bool is not None:
-                value_i = cache_value[:,:,:,i,:]
+                value_i = [value[:,:,i,:] for value in cache_value]
             else:
                 value_i = None
 
@@ -407,7 +409,7 @@ class CachedTransformerDecoder(modules.Module):
         if self.enable_relative_positional_embedding:
             batch_size, seq_len = x.size(0), x.size(1)
             if values is not None:
-                cache_len = values.size(0) * values.size(2)
+                cache_len = sum([value.size(1) for value in values])
                 seq_len += cache_len
             if k is not None:
                 k_len = k.size(1)
@@ -480,7 +482,7 @@ class CachedTransformerDecoder(modules.Module):
 
         for i, layer in enumerate(self.layers):
             if indice_bool is not None:
-                value_i = cache_value[:,:,:,i,:]
+                value_i = [value[:,:,i,:] for value in cache_value]
             else:
                 value_i = None
 
@@ -634,7 +636,8 @@ class CachedTransformer(modules.Module):
             if decoder_input.size(0) % tgt_starts.size(0) == 0:
                 if mode == "infer":
                     tgt_starts = tgt_starts.expand(decoder_input.size(0) // tgt_starts.size(0), -1).reshape(-1)
-                decoder_input = self.encoding(decoder_input, starts=tgt_starts)
+                if decoder_inputs.size(0) == tgt_starts.size(0): 
+                    decoder_input = self.encoding(decoder_input, starts=tgt_starts)
                 if not mode == "infer":
                     # in inference statge, the update of target_starts is in beam_search
                     state["target_starts"] = features["target_mask"].sum(1).int()
