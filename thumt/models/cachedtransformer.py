@@ -272,6 +272,7 @@ class CachedTransformerEncoder(modules.Module):
         self.enable_cache = params.enable_encoder_cache
         self.enable_relative_positional_embedding = params.enable_relative_positional_embedding
         self.query_method = params.src_query_method
+        self.dropout = params.residual_dropout
 
         with utils.scope(name):
             self.cache = Cache(params, name="encoder_cache")
@@ -305,7 +306,7 @@ class CachedTransformerEncoder(modules.Module):
             pos_seq = torch.arange(seq_len-1, -1, -1.0).to(x)
             pos_seq = pos_seq.expand(batch_size, -1)
             pos_emb = self.pos_emb(pos_seq)
-            #?pos_emb dropout
+            pos_emb = F.dropout(pos_emb, self.dropout, self.training)
             return pos_emb
         else:
             return None
@@ -381,6 +382,7 @@ class CachedTransformerDecoder(modules.Module):
         self.enable_cache = params.enable_decoder_cache
         self.enable_relative_positional_embedding = params.enable_relative_positional_embedding
         self.query_method = params.tgt_query_method
+        self.dropout = params.residual_dropout
 
         with utils.scope(name):
             self.cache = Cache(params, name="decoder_cache")
@@ -417,7 +419,7 @@ class CachedTransformerDecoder(modules.Module):
             pos_seq = torch.arange(seq_len-1, -1, -1.0).to(x)
             pos_seq = pos_seq.expand(batch_size, -1)
             pos_emb = self.pos_emb(pos_seq)
-            #?pos_emb dropout
+            pos_emb = F.dropout(pos_emb, self.dropout, self.training)
             return pos_emb
         else:
             return None
