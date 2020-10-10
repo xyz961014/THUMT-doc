@@ -12,10 +12,12 @@ def update_cache(model, features, state, last_feature, evaluate=False):
     if state is not None:
         src_key, src_value = model.encoder.cache.update_cache(last_feature["source_cache_key"], 
                                                               last_feature["source_cache_value"],
-                                                              state["encoder_hidden"])
+                                                              state["encoder_hidden"],
+                                                              state["source_lens"])
         tgt_key, tgt_value = model.decoder.cache.update_cache(last_feature["target_cache_key"],
                                                               last_feature["target_cache_value"],
-                                                              state["decoder_hidden"])
+                                                              state["decoder_hidden"],
+                                                              state["target_lens"])
     else:
         src_key, src_value = model.encoder.cache.new_key_and_value()
         tgt_key, tgt_value = model.decoder.cache.new_key_and_value()
@@ -35,10 +37,10 @@ def update_cache(model, features, state, last_feature, evaluate=False):
     return features
 
 def update_starts(params, features, state, last_feature, evaluate=False):
-    if state is not None and "source_starts" in state.keys() and "target_starts" in state.keys():
+    if state is not None and "source_lens" in state.keys() and "target_lens" in state.keys():
         # update starts position
-        src_starts = last_feature["source_starts"] + state["source_starts"]
-        tgt_starts = last_feature["target_starts"] + state["target_starts"]
+        src_starts = last_feature["source_starts"] + state["source_lens"]
+        tgt_starts = last_feature["target_starts"] + state["target_lens"]
     else:
         # init starts position
         if not evaluate:

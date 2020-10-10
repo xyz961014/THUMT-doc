@@ -147,10 +147,10 @@ class Cache(modules.Module):
         #                          self.cache_L, 
         #                          1 + self.num_layers,
         #                          self.hidden_size).cuda()
-        cache_value = [torch.zeros(self.batch_size, 
-                                   0, 
+        cache_value = [[torch.zeros(0, 
                                    1 + self.num_layers,
                                    self.hidden_size).cuda()
+                           for _ in range(self.batch_size)]
                        for _ in range(self.cache_N)]
         return cache_key, cache_value
 
@@ -165,7 +165,7 @@ class Cache(modules.Module):
         
         return attention, topk_indices
 
-    def update_cache(self, key, value, hidden_state):
+    def update_cache(self, key, value, hidden_state, mask):
 
         # key dimension:   [cache_N, batch_size, cache_dk]
         # value dimension: [cache_N, batch_size, cache_L, 1 + num_layers, hidden_size]
@@ -203,10 +203,11 @@ class Cache(modules.Module):
         elif self.summary_method == "linear":
             new_key = self.summary(top_layer.reshape(-1, self.cache_L * self.hidden_size))
 
-        new_value = F.pad(hidden_state, (0, 0, 0, 0, 0, self.cache_L - hidden_state.size(-3)))
+        #new_value = F.pad(hidden_state, (0, 0, 0, 0, 0, self.cache_L - hidden_state.size(-3)))
+        new_value = [v.squeeze(0).detach() for v in hidden_state.split(1, dim=0)]
 
         key_blocks[-1] = new_key.unsqueeze(0).detach()
-        value_blocks[-1] = new_value.detach()
+        value_blocks[-1] = new_value
         
         key = torch.cat(key_blocks, 0)
         #value = torch.cat(value_blocks, 0)
@@ -220,7 +221,7 @@ class Cache(modules.Module):
             key_blocks[i] = key_blocks[i+1]
             value_blocks[i] = value_blocks[i+1]
         key_blocks[-1] = torch.zeros_like(key_blocks[0])
-        value_blocks[-1] = torch.zeros_like(value_blocks[0])
+        value_blocks[-1] = [torch.zeros_like(value_blocks[0][0]) for _ in range(len(value_blocks[0]))]
 
         return key_blocks, value_blocks
 
@@ -301,13 +302,13 @@ class CachedTransformerEncoder(modules.Module):
         if self.enable_relative_positional_embedding:
             batch_size, seq_len = x.size(0), x.size(1)
             if values is not None:
-                cache_len = sum([value.size(1) for value in values])
-                seq_len += cache_len
-            pos_seq = torch.arange(seq_len-1, -1, -1.0).to(x)
-            pos_seq = pos_seq.expand(batch_size, -1)
-            pos_emb = self.pos_emb(pos_seq)
-            pos_emb = F.dropout(pos_emb, self.dropout, self.training)
-            return pos_emb
+                cache_lens = [sum([value[i].size(0) for value in values]) for i in range(batch_size)]
+                pos_seqs = [torch.arange(seq_len + cache_len - 1, -1, -1.0).to(x) for cache_len in cache_lens]
+            else:
+                pos_seqs = [torch.arange(seq_len-1, -1, -1.0).to(x) for _ in range(batch_size)]
+            pos_embs = [self.pos_emb(pos_seq.unsqueeze(0)) for pos_seq in pos_seqs]
+            pos_embs = [F.dropout(pos_emb, self.dropout, self.training) for pos_emb in pos_embs]
+            return pos_embs
         else:
             return None
 
@@ -353,7 +354,7 @@ class CachedTransformerEncoder(modules.Module):
 
         for i, layer in enumerate(self.layers):
             if indice_bool is not None:
-                value_i = [value[:,:,i,:] for value in cache_value]
+                value_i = [[value[:,i,:] for value in values] for values in cache_value]
             else:
                 value_i = None
 
@@ -410,17 +411,21 @@ class CachedTransformerDecoder(modules.Module):
     def compute_pos_emb(self, x, values=None, k=None):
         if self.enable_relative_positional_embedding:
             batch_size, seq_len = x.size(0), x.size(1)
-            if values is not None:
-                cache_len = sum([value.size(1) for value in values])
-                seq_len += cache_len
             if k is not None:
                 k_len = k.size(1)
                 seq_len += k_len
-            pos_seq = torch.arange(seq_len-1, -1, -1.0).to(x)
-            pos_seq = pos_seq.expand(batch_size, -1)
-            pos_emb = self.pos_emb(pos_seq)
-            pos_emb = F.dropout(pos_emb, self.dropout, self.training)
-            return pos_emb
+            if values is not None:
+                cache_batch_size = len(values[0])
+                cache_lens = [sum([value[i].size(0) for value in values]) for i in range(cache_batch_size)]
+                if not cache_batch_size == batch_size:
+                    beam_size = batch_size // cache_batch_size
+                    cache_lens = [cache_lens[i // beam_size] for i in range(batch_size)]
+                pos_seqs = [torch.arange(seq_len + cache_len - 1, -1, -1.0).to(x) for cache_len in cache_lens]
+            else:
+                pos_seqs = [torch.arange(seq_len-1, -1, -1.0).to(x) for _ in range(batch_size)]
+            pos_embs = [self.pos_emb(pos_seq.unsqueeze(0)) for pos_seq in pos_seqs]
+            pos_embs = [F.dropout(pos_emb, self.dropout, self.training) for pos_emb in pos_embs]
+            return pos_embs
         else:
             return None
 
@@ -484,7 +489,7 @@ class CachedTransformerDecoder(modules.Module):
 
         for i, layer in enumerate(self.layers):
             if indice_bool is not None:
-                value_i = [value[:,:,i,:] for value in cache_value]
+                value_i = [[value[:,i,:] for value in values] for values in cache_value]
             else:
                 value_i = None
 
@@ -598,6 +603,8 @@ class CachedTransformer(modules.Module):
         src_cache_value = features["source_cache_value"]
         enc_attn_bias = self.masking_bias(src_mask)
 
+        state["source_lens"] = src_mask.sum(1).int()
+
         ### get embedding ###
         inputs = F.embedding(src_seq, self.src_embedding)
         inputs = inputs * (self.hidden_size ** 0.5)
@@ -606,7 +613,6 @@ class CachedTransformer(modules.Module):
             src_starts = features["source_starts"]
             if inputs.size(0) == src_starts.size(0): 
                 inputs = self.encoding(inputs, starts=src_starts)
-                state["source_starts"] = src_mask.sum(1).int()
         inputs = F.dropout(inputs, self.dropout, self.training)
             #? could consider fixed dropout 
 
@@ -627,6 +633,10 @@ class CachedTransformer(modules.Module):
         enc_attn_bias = state["enc_attn_bias"]
         dec_attn_bias = self.causal_bias(tgt_seq.shape[1])
 
+        if not mode == "infer":
+            # in inference statge, the update of target_lens is in beam_search
+            state["target_lens"] = features["target_mask"].sum(1).int()
+
         ### get embedding ###
         targets = F.embedding(tgt_seq, self.tgt_embedding)
         targets = targets * (self.hidden_size ** 0.5)
@@ -640,9 +650,6 @@ class CachedTransformer(modules.Module):
                     tgt_starts = tgt_starts.expand(decoder_input.size(0) // tgt_starts.size(0), -1).reshape(-1)
                 if decoder_input.size(0) == tgt_starts.size(0): 
                     decoder_input = self.encoding(decoder_input, starts=tgt_starts)
-                if not mode == "infer":
-                    # in inference statge, the update of target_starts is in beam_search
-                    state["target_starts"] = features["target_mask"].sum(1).int()
         decoder_input = F.dropout(decoder_input, self.dropout, self.training)
             #? could consider fixed dropout 
 
