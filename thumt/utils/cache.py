@@ -39,8 +39,10 @@ def update_cache(model, features, state, last_feature, evaluate=False):
 def update_starts(params, features, state, last_feature, evaluate=False):
     if state is not None and "source_lens" in state.keys() and "target_lens" in state.keys():
         # update starts position
-        src_starts = last_feature["source_starts"] + state["source_lens"]
-        tgt_starts = last_feature["target_starts"] + state["target_lens"]
+        if last_feature["source_starts"].size(0) == state["source_lens"].size(0):
+            src_starts = last_feature["source_starts"] + state["source_lens"]
+        if last_feature["target_starts"].size(0) == state["target_lens"].size(0):
+            tgt_starts = last_feature["target_starts"] + state["target_lens"]
     else:
         # init starts position
         if not evaluate:
