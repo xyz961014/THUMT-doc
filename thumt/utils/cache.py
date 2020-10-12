@@ -42,7 +42,7 @@ def update_starts(params, features, state, last_feature, evaluate=False):
         if last_feature["source_starts"].size(0) == state["source_lens"].size(0):
             src_starts = last_feature["source_starts"] + state["source_lens"]
         else:
-            src_starts - last_feature["source_starts"]
+            src_starts = last_feature["source_starts"]
 
         if last_feature["target_starts"].size(0) == state["target_lens"].size(0):
             tgt_starts = last_feature["target_starts"] + state["target_lens"]
