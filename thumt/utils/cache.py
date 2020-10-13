@@ -10,29 +10,35 @@ import torch
 
 def update_cache(model, features, state, last_feature, evaluate=False):
     if state is not None:
-        src_key, src_value = model.encoder.cache.update_cache(last_feature["source_cache_key"], 
-                                                              last_feature["source_cache_value"],
-                                                              state["encoder_hidden"],
-                                                              state["source_lens"])
-        tgt_key, tgt_value = model.decoder.cache.update_cache(last_feature["target_cache_key"],
-                                                              last_feature["target_cache_value"],
-                                                              state["decoder_hidden"],
-                                                              state["target_lens"])
+        src_key, src_value, src_mask = model.encoder.cache.update_cache(last_feature["source_cache_key"], 
+                                                                        last_feature["source_cache_value"],
+                                                                        last_feature["source_cache_mask"],
+                                                                        state["encoder_hidden"],
+                                                                        state["source_mask"])
+        tgt_key, tgt_value, tgt_mask = model.decoder.cache.update_cache(last_feature["target_cache_key"],
+                                                                        last_feature["target_cache_value"],
+                                                                        last_feature["target_cache_mask"],
+                                                                        state["decoder_hidden"],
+                                                                        state["target_mask"])
     else:
-        src_key, src_value = model.encoder.cache.new_key_and_value()
-        tgt_key, tgt_value = model.decoder.cache.new_key_and_value()
+        src_key, src_value, src_mask = model.encoder.cache.new_key_and_value()
+        tgt_key, tgt_value, tgt_mask = model.decoder.cache.new_key_and_value()
 
 
     if not evaluate:
         features[0]["source_cache_key"] = src_key
         features[0]["source_cache_value"] = src_value
+        features[0]["source_cache_mask"] = src_mask
         features[0]["target_cache_key"] = tgt_key
         features[0]["target_cache_value"] = tgt_value
+        features[0]["target_cache_mask"] = tgt_mask
     else:
         features["source_cache_key"] = src_key
         features["source_cache_value"] = src_value
+        features["source_cache_mask"] = src_mask
         features["target_cache_key"] = tgt_key
         features["target_cache_value"] = tgt_value
+        features["target_cache_mask"] = tgt_mask
 
     return features
 

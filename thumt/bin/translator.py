@@ -20,7 +20,7 @@ import thumt.data as data
 import torch.distributed as dist
 import thumt.models as models
 import thumt.utils as utils
-from thumt.utils import update_cache, update_starts
+from thumt.utils import update_cache
 
 
 def parse_args():
@@ -267,8 +267,6 @@ def main(args):
                 for im, model in enumerate(model_list):
                     if model.name == "cachedtransformer":
                         features = update_cache(model, features, states[im], last_features[im], evaluate=True)
-                        if not params.enable_relative_positional_embedding:
-                            features = update_starts(params, features, states[im], last_features[im], evaluate=True)
                         last_features[im] = features
 
             counter += 1
