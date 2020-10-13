@@ -176,7 +176,7 @@ class Cache(modules.Module):
             # do not update cache if batch_size does not match
             print("batch_size not match when update cache, with key/value batch_size %s and hidden batch_size %s" % 
                   (key.size(1), hidden_state.size(0)))
-            return key, value
+            return key, value, mask
 
         key_blocks = list(key.split(1))
         value_blocks = value
@@ -754,6 +754,7 @@ class CachedTransformer(modules.Module):
             enable_encoder_cache=True,
             enable_decoder_cache=True,
             enable_relative_positional_embedding=False,
+            enable_sentence_embedding=True,
             # Override default parameters
             warmup_steps=4000,
             train_steps=100000,
