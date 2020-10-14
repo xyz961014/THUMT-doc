@@ -66,7 +66,8 @@ class LearnableSelfAttentionSubLayer(modules.Module):
             self.attention = modules.LearnableMultiHeadSelfAttention(params.hidden_size, 
                                                                      params.num_heads, 
                                                                      params.attention_dropout,
-                                                                     params.enable_relative_positional_embedding)
+                                                                     params.enable_relative_positional_embedding,
+                                                                     params.enable_sentence_embedding)
             self.layer_norm = modules.LayerNorm(params.hidden_size)
 
     def forward(self, x, bias, pos_emb, pos_bias_u, pos_bias_v, 

@@ -277,9 +277,28 @@ class MultiHeadAdditiveAttention(MultiHeadAttentionBase):
             raise ValueError("Unknown initializer %d" % initializer)
 
 
+class PositionalEmbedding(Module):
+    def __init__(self, d_model, name="positional_embedding"):
+        super().__init__(name=name)
+            
+        self.d_model = d_model
+
+        inverse_freq = 1 / (10000 ** (torch.arange(0.0, d_model, 2.0) / d_model))
+        self.register_buffer("inverse_freq", inverse_freq)
+
+    def forward(self, pos_seq):
+
+        sinusoid = torch.einsum("bi,j->ibj", pos_seq, self.inverse_freq)
+
+        pos_embedding = torch.cat((sinusoid.sin(), sinusoid.cos()), -1)
+
+        return pos_embedding
+
+
+
 class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
 
-    def __init__(self, hidden_size, num_heads, dropout=0.0, enable_rel_emb=True,
+    def __init__(self, hidden_size, num_heads, dropout=0.0, enable_rel_emb=True, enable_sent_emb=False,
                  name="learnable_multihead_selfattention"):
         super().__init__(name=name)
 
@@ -287,6 +306,10 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         self.hidden_size = hidden_size
         self.dropout = dropout
         self.enable_rel_emb = enable_rel_emb
+        self.enable_sent_emb = enable_sent_emb
+
+        if enable_sent_emb:
+            self.sent_emb = PositionalEmbedding(hidden_size)
 
         with utils.scope(name):
             self.q_transform = Affine(hidden_size, hidden_size,
@@ -348,6 +371,9 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
             cache_tensor = torch.cat([F.pad(value, (0, 0, 0, cache_L - value.size(1))).unsqueeze(0) 
                                       for value in cache],
                                      dim=0)
+            if self.enable_sent_emb:
+                sent_emb = self.sent_emb(torch.arange(cache_N).unsqueeze(0)).to(cache_tensor).unsqueeze(1)
+                cache_tensor = cache_tensor + sent_emb
             cache_tensor = cache_tensor.transpose(0, 1).reshape(cache_batch_size, -1, hidden_size)
             cache_k = self.k_transform(cache_tensor)
             cache_v = self.v_transform(cache_tensor)
