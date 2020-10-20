@@ -297,7 +297,7 @@ class PositionalEmbedding(Module):
 
 class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
 
-    def __init__(self, hidden_size, num_heads, dropout=0.0, enable_rel_emb=True, enable_sent_emb=False,
+    def __init__(self, hidden_size, num_heads, dropout=0.0, enable_rel_emb=True, enable_sent_emb=False, gated=False,
                  name="learnable_multihead_selfattention"):
         super().__init__(name=name)
 
@@ -306,9 +306,14 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         self.dropout = dropout
         self.enable_rel_emb = enable_rel_emb
         self.enable_sent_emb = enable_sent_emb
+        self.gated = gated
 
         if enable_sent_emb:
             self.sent_emb = PositionalEmbedding(hidden_size)
+
+        if gated:
+            self.W_c = Affine(hidden_size, hidden_size, name="W_c")
+            self.W_i = Affine(hidden_size, hidden_size, name="W_i")
 
         with utils.scope(name):
             self.q_transform = Affine(hidden_size, hidden_size,
@@ -445,7 +450,8 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
                 cache_AC = cache_AC + cache_bias
             cache_AC = cache_AC.permute(1, 2, 3, 0, 4)
             cache_AC = cache_AC.reshape(*cache_AC.size()[:3], -1)
-            AC = torch.cat((cache_AC, AC), dim=-1)
+            if not self.gated:
+                AC = torch.cat((cache_AC, AC), dim=-1)
 
             if self.enable_rel_emb:
                 pre_BD = torch.einsum("bnid,ibk->kbnid", qvh, indice_bool)
@@ -464,9 +470,14 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         weights = F.dropout(torch.softmax(logits, dim=-1),
                             p=self.dropout,
                             training=self.training)
+        if self.gated and cache_len > 0:
+            cache_weights = F.dropout(torch.softmax(cache_AC, dim=-1),
+                                      p=self.dropout,
+                                      training=self.training)
 
         if cache_len > 0:
-            cache_weights, weights = weights.split([cache_L * cache_N, k_len], dim=-1)
+            if not self.gated:
+                cache_weights, weights = weights.split([cache_L * cache_N, k_len], dim=-1)
             if sent_weights is not None:
                 cache_weights = cache_weights.reshape(*cache_weights.size()[:-1], cache_N, cache_L)
                 cache_weights = cache_weights.permute(3, 0, 1, 2, 4)
@@ -486,7 +497,11 @@ class LearnableMultiHeadSelfAttention(MultiHeadAttentionBase):
         x = torch.matmul(weights, vh)
 
         if cache_len > 0:
-            x = x + cache_output
+            if not self.gated:
+                x = x + cache_output
+            else:
+                lamb = torch.sigmoid(self.W_i(x) + self.W_c(cache_output))
+                x = lamb * x + (1 - lamb) * cache_output
 
         # combine heads
         output = self.o_transform(self.combine_heads(x))

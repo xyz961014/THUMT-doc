@@ -65,8 +65,8 @@ class LearnableSelfAttentionSubLayer(modules.Module):
         self.gated = params.enable_residual_gate
         if self.gated:
             hidden_size = params.hidden_size
-            self.x_transform = Affine(hidden_size, hidden_size, name="x_transform")
-            self.y_transform = Affine(hidden_size, hidden_size, name="y_transform")
+            self.W_x = Affine(hidden_size, hidden_size, name="W_x")
+            self.W_y = Affine(hidden_size, hidden_size, name="W_y")
 
         with utils.scope(name):
             self.attention = modules.LearnableMultiHeadSelfAttention(params.hidden_size, 
@@ -95,7 +95,7 @@ class LearnableSelfAttentionSubLayer(modules.Module):
         y = F.dropout(y, self.dropout, self.training)
 
         if self.gated:
-            lamb = torch.sigmoid(self.x_transform(x) + self.y_transform(y))
+            lamb = torch.sigmoid(self.W_x(x) + self.W_y(y))
             if self.normalization == "before":
                 return lamb * x + (1 - lamb) * y
             else:
@@ -770,6 +770,7 @@ class CachedTransformer(modules.Module):
             enable_relative_positional_embedding=False,
             enable_sentence_embedding=True,
             enable_residual_gate=False,
+            enable_cache_gate=False,
             # Override default parameters
             warmup_steps=4000,
             train_steps=100000,
