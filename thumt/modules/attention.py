@@ -283,11 +283,10 @@ class PositionalEmbedding(Module):
             
         self.d_model = d_model
 
-        self.inverse_freq = 1 / (10000 ** (torch.arange(0.0, d_model, 2.0) / d_model))
-
     def forward(self, pos_seq):
 
-        sinusoid = torch.einsum("bi,j->ibj", pos_seq, self.inverse_freq)
+        inverse_freq = 1 / (10000 ** (torch.arange(0.0, self.d_model, 2.0) / self.d_model))
+        sinusoid = torch.einsum("bi,j->ibj", pos_seq, inverse_freq)
 
         pos_embedding = torch.cat((sinusoid.sin(), sinusoid.cos()), -1)
 
