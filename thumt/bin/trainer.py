@@ -386,7 +386,7 @@ def main(args):
     if args.checkpoint is not None:
         # Load pre-trained models
         state = torch.load(args.checkpoint, map_location="cpu")
-        model.load_state_dict(state["model"])
+        model.load_state_dict(state["model"], strict=False)
         step = params.initial_step
         epoch = 0
         broadcast(model)

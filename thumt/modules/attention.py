@@ -283,8 +283,7 @@ class PositionalEmbedding(Module):
             
         self.d_model = d_model
 
-        inverse_freq = 1 / (10000 ** (torch.arange(0.0, d_model, 2.0) / d_model))
-        self.register_buffer("inverse_freq", inverse_freq)
+        self.inverse_freq = 1 / (10000 ** (torch.arange(0.0, d_model, 2.0) / d_model))
 
     def forward(self, pos_seq):
 

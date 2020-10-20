@@ -14,6 +14,7 @@ import thumt.utils as utils
 import thumt.modules as modules
 
 from thumt.models.transformer import AttentionSubLayer, FFNSubLayer
+from thumt.modules.affine import Affine
 
 
 
@@ -61,6 +62,11 @@ class LearnableSelfAttentionSubLayer(modules.Module):
 
         self.dropout = params.residual_dropout
         self.normalization = params.normalization
+        self.gated = params.enable_residual_gate
+        if self.gated:
+            hidden_size = params.hidden_size
+            self.x_transform = Affine(hidden_size, hidden_size, name="x_transform")
+            self.y_transform = Affine(hidden_size, hidden_size, name="y_transform")
 
         with utils.scope(name):
             self.attention = modules.LearnableMultiHeadSelfAttention(params.hidden_size, 
@@ -87,6 +93,13 @@ class LearnableSelfAttentionSubLayer(modules.Module):
                 state["k"], state["v"] = k, v
 
         y = F.dropout(y, self.dropout, self.training)
+
+        if self.gated:
+            lamb = torch.sigmoid(self.x_transform(x) + self.y_transform(y))
+            if self.normalization == "before":
+                return lamb * x + (1 - lamb) * y
+            else:
+                return self.layer_norm(lamb * x + (1 - lamb * y))
 
         if self.normalization == "before":
             return x + y
@@ -756,6 +769,7 @@ class CachedTransformer(modules.Module):
             enable_decoder_cache=True,
             enable_relative_positional_embedding=False,
             enable_sentence_embedding=True,
+            enable_residual_gate=False,
             # Override default parameters
             warmup_steps=4000,
             train_steps=100000,
