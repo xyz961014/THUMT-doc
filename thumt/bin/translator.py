@@ -181,11 +181,17 @@ def main(args):
 
         if len(args.input) == 1:
             mode = "infer"
-            dataset = data.get_dataset(args.input[0], mode, params)
+            if params.from_torchtext:
+                dataset = data.get_dataset_torchtext(args.input[0], mode, params)
+            else:
+                dataset = data.get_dataset(args.input[0], mode, params)
         else:
             # Teacher-forcing
             mode = "eval"
-            dataset = data.get_dataset(args.input, mode, params)
+            if params.from_torchtext:
+                dataset = data.get_dataset_torchtext(args.input, mode, params)
+            else:
+                dataset = data.get_dataset(args.input, mode, params)
 
         iterator = iter(dataset)
         idx = 0

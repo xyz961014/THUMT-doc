@@ -371,10 +371,16 @@ def main(args):
     if dist.get_rank() == 0:
         print_variables(model)
 
-    dataset = data.get_dataset(params.input, "train", params)
+    if params.from_torchtext:
+        dataset = data.get_dataset_torchtext(params.input, "train", params)
+    else:
+        dataset = data.get_dataset(params.input, "train", params)
 
     if params.validation:
-        eval_dataset = data.get_dataset(params.validation, "infer", params)
+        if params.from_torchtext:
+            eval_dataset = data.get_dataset_torchtext(params.validation, "infer", params)
+        else:
+            eval_dataset = data.get_dataset(params.validation, "infer", params)
         references = load_references(params.references)
     else:
         eval_dataset = None
