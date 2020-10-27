@@ -423,7 +423,7 @@ def main(args):
 
             counter += 1
             t = time.time()
-            features = data.lookup(features, "train", params)
+            features = data.lookup(features, "train", params, from_torchtext=params.from_torchtext)
             if model.name == "cachedtransformer":
                 features = utils.update_cache(model, features, state, last_feature)
                 last_feature = features[0]

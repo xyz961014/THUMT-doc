@@ -10,7 +10,8 @@ import numpy as np
 
 
 def _lookup(x, vocab):
-    x = x.tolist()
+    if not type(x) == list:
+        x = x.tolist()
     y = []
 
     for _, batch in enumerate(x):
@@ -38,15 +39,25 @@ def load_vocabulary(filename):
     return vocab, word2idx, idx2word
 
 
-def lookup(inputs, mode, params):
+def lookup(inputs, mode, params, from_torchtext=False):
     if mode != "infer":
-        features, labels = inputs
+        if from_torchtext:
+            labels = inputs.label
+            features = inputs.__dict__
+        else:
+            features, labels = inputs
+
         source, target = features["source"], features["target"]
-        source = source.numpy()
-        target = target.numpy()
-        labels = labels.numpy()
-        src_mask = torch.FloatTensor(features["source_mask"].numpy()).cuda()
-        tgt_mask = torch.FloatTensor(features["target_mask"].numpy()).cuda()
+
+        if not from_torchtext:
+            source = source.numpy()
+            target = target.numpy()
+            labels = labels.numpy()
+            src_mask = torch.FloatTensor(features["source_mask"].numpy()).cuda()
+            tgt_mask = torch.FloatTensor(features["target_mask"].numpy()).cuda()
+        else:
+            src_mask = features["source_mask"].cuda()
+            tgt_mask = features["target_mask"].cuda()
 
         source = _lookup(source, params.lookup["source"])
         target = _lookup(target, params.lookup["target"])
@@ -61,9 +72,18 @@ def lookup(inputs, mode, params):
 
         return features, labels
     else:
-        source = inputs["source"].numpy()
+        if from_torchtext:
+            features = inputs.__dict__
+            source = features["source"]
+        else:
+            source = inputs["source"].numpy()
+
         source = _lookup(source, params.lookup["source"])
-        src_mask = torch.FloatTensor(inputs["source_mask"].numpy()).cuda()
+
+        if not from_torchtext:
+            src_mask = torch.FloatTensor(inputs["source_mask"].numpy()).cuda()
+        else:
+            src_mask = features["source_mask"].cuda()
 
         features = {
             "source": source,

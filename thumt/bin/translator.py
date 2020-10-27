@@ -246,7 +246,7 @@ def main(args):
         while True:
             try:
                 features = next(iterator)
-                features = data.lookup(features, mode, params)
+                features = data.lookup(features, mode, params, from_torchtext=params.from_torchtext)
 
                 if mode == "eval":
                     features = features[0]

@@ -771,6 +771,7 @@ class CachedTransformer(modules.Module):
             enable_sentence_embedding=True,
             enable_residual_gate=False,
             enable_cache_gate=False,
+            from_torchtext=True,
             # Override default parameters
             warmup_steps=4000,
             train_steps=100000,

@@ -148,7 +148,7 @@ def _evaluate_model(model, dataset, references, params):
         while True:
             try:
                 features = next(iterator)
-                features = lookup(features, "infer", params)
+                features = lookup(features, "infer", params, from_torchtext=params.from_torchtext)
                 batch_size = features["source"].shape[0]
             except:
                 features = {
@@ -159,8 +159,6 @@ def _evaluate_model(model, dataset, references, params):
             finally:
                 if params.model == "cachedtransformer":
                     features = update_cache(model, features, state, last_feature, evaluate=True)
-                    if not params.enable_relative_positional_embedding:
-                        features = update_starts(params, features, state, last_feature, evaluate=True)
                     last_feature = features
 
             counter += 1
