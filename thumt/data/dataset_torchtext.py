@@ -30,17 +30,18 @@ def preprocessing(string, params, add_bos=False):
     words = string.strip().split()
     # Append BOS and EOS
     if add_bos:
-        words.insert(0, params.bos)
+        words.insert(0, params.bos.encode("utf-8"))
     else:
-        words.append(params.eos)
+        words.append(params.eos.encode("utf-8"))
 
     return words
 
 def postprocessing(sents, params):
     sent_lens = [len(sent) for sent in sents]
     max_len = max(sent_lens)
+    pad_token = params.pad.encode("utf-8")
     for i, l in enumerate(sent_lens):
-        pads = [params.pad for _ in range(max_len - l)]
+        pads = [pad_token for _ in range(max_len - l)]
         sents[i] = sents[i] + pads
     return sents
 
