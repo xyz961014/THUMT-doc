@@ -60,8 +60,13 @@ def batch(data, batch_size, batch_size_fn=None):
     if minibatch:
         yield minibatch
 
-def continuous_batch(data, batch_size):
+def continuous_batch(data, batch_size, params):
     """Yield elements from data in chunks of batch_size."""
+    max_length = params.max_length
+    if hasattr(data[0], "target"):
+        data = [d for d in data if len(d.source) <= max_length and len(d.target) <= max_length]
+    else:
+        data = [d for d in data if len(d.source) <= max_length]
     batch_len = len(data) // batch_size
     data = data[:batch_len * batch_size]
     minibatch, size_so_far = [], 0
@@ -173,7 +178,7 @@ class MTIterator(data.Iterator):
 
     def create_batches(self):
         if self.continuous:
-            self.batches = continuous_batch(self.data(), self.batch_size)
+            self.batches = continuous_batch(self.data(), self.batch_size, self.params)
         else:
             self.batches = batch(self.data(), self.batch_size, self.batch_size_fn)
 
