@@ -24,6 +24,8 @@ def find_path_and_exts(name1, name2):
     return path, exts
 
 def preprocessing(string, params, add_bos=False):
+    # Encode
+    string = string.encode("utf-8")
     # Split string
     words = string.strip().split()
     # Append BOS and EOS
