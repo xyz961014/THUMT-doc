@@ -81,6 +81,7 @@ def default_params():
         min_length=1,
         max_length=256,
         buffer_size=10000,
+        from_torchtext=False,
         # Initialization
         initializer_gain=1.0,
         initializer="uniform_unit_scaling",
