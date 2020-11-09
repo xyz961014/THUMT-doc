@@ -55,6 +55,7 @@ def default_params():
         input=None,
         output=None,
         vocabulary=None,
+        from_torchtext=False,
         # vocabulary specific
         pad="<pad>",
         bos="<bos>",
